@@ -6,6 +6,8 @@ import com.aiko.onmyoji.data.model.ActResponse
 import com.aiko.onmyoji.data.model.HealthResponse
 import com.aiko.onmyoji.data.model.JourneyState
 import com.aiko.onmyoji.data.model.StartRequest
+import com.aiko.onmyoji.data.model.TalkRequest
+import com.aiko.onmyoji.data.model.TalkResponse
 import retrofit2.http.Body
 import retrofit2.http.GET
 import retrofit2.http.POST
@@ -25,4 +27,7 @@ interface OnmyojiApi {
 
     @POST("api/onmyoji/act")
     suspend fun act(@Body body: ActRequest): ActResponse
+
+    @POST("api/onmyoji/talk")
+    suspend fun talk(@Body body: TalkRequest): TalkResponse
 }

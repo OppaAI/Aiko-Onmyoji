@@ -17,6 +17,13 @@ data class Entity(
 )
 
 @Serializable
+data class DialogueLine(
+    val who: String = "",
+    val target: String = "",
+    val text: String = "",
+)
+
+@Serializable
 data class JourneyState(
     val date: String = "1582-06-01",
     val location: String = "Kyoto",
@@ -27,6 +34,7 @@ data class JourneyState(
     val journey_summary: String = "",
     val entities: List<Entity> = emptyList(),
     val flags: List<String> = emptyList(),
+    val dialogue: List<DialogueLine> = emptyList(),
     val hp: Int = 10,
     val max_hp: Int = 10,
     val mp: Int = 10,
@@ -56,6 +64,7 @@ data class ActRequest(
     val to: String = "",
     val ritual: String = "",
     val target: String = "",
+    val skill: String = "",
 )
 
 @Serializable
@@ -70,4 +79,17 @@ data class ActOptions(
     val destinations: List<String> = emptyList(),
     val all_places: List<String> = emptyList(),
     val rituals: List<String> = emptyList(),
+)
+
+@Serializable
+data class TalkRequest(
+    val target: String = "aiko",
+    val message: String = "",
+)
+
+@Serializable
+data class TalkResponse(
+    val journey: JourneyState = JourneyState(),
+    val reply: String = "",
+    val events: List<String> = emptyList(),
 )

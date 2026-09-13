@@ -5,6 +5,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -28,6 +29,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -49,6 +51,7 @@ import com.aiko.onmyoji.data.ServerConfig
 import com.aiko.onmyoji.data.model.ActRequest
 import com.aiko.onmyoji.data.model.JourneyState
 import com.aiko.onmyoji.data.model.StartRequest
+import com.aiko.onmyoji.data.model.TalkRequest
 import com.aiko.onmyoji.data.remote.OnmyojiApi
 import com.aiko.onmyoji.ui.theme.AikoOnmyojiTheme
 import com.aiko.onmyoji.ui.theme.OnmyojiIndigo
@@ -203,6 +206,21 @@ fun OnmyojiApp(api: OnmyojiApi, baseUrl: String, modifier: Modifier = Modifier) 
                         loading = false
                     }
                 },
+                onTalk = { target, message ->
+                    scope.launch {
+                        loading = true
+                        try {
+                            val res = withContext(Dispatchers.IO) {
+                                api.talk(TalkRequest(target = target, message = message))
+                            }
+                            journey = res.journey
+                            error = null
+                        } catch (e: Exception) {
+                            error = e.message ?: "Talk failed."
+                        }
+                        loading = false
+                    }
+                },
                 onBack = { screen = Screen.Title },
             )
         }
@@ -277,11 +295,14 @@ private fun JourneyScreen(
     events: List<String>,
     onRefresh: () -> Unit,
     onAct: (ActRequest) -> Unit,
+    onTalk: (String, String) -> Unit,
     onBack: () -> Unit,
 ) {
     val scroll = rememberScrollState()
     var showTravel by remember { mutableStateOf(false) }
     var showRitual by remember { mutableStateOf(false) }
+    var showTalk by remember { mutableStateOf(false) }
+    var showTrain by remember { mutableStateOf(false) }
     var destinations by remember { mutableStateOf(listOf<String>()) }
     var rituals by remember { mutableStateOf(listOf("ward", "bind", "purify", "banish")) }
     Column(
@@ -388,6 +409,33 @@ private fun JourneyScreen(
                     colors = ButtonDefaults.buttonColors(containerColor = OnmyojiIndigo),
                 ) { Text("🔍 Search", fontSize = 12.sp, maxLines = 1) }
             }
+            Spacer(modifier = Modifier.height(6.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Button(
+                    onClick = { showTalk = true },
+                    enabled = !loading && journey.entities.isNotEmpty(),
+                    modifier = Modifier.weight(1f).height(40.dp),
+                    contentPadding = PaddingValues(horizontal = 4.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = OnmyojiIndigo),
+                ) { Text("💬 Talk", fontSize = 12.sp, maxLines = 1) }
+                Button(
+                    onClick = { showTrain = true },
+                    enabled = !loading,
+                    modifier = Modifier.weight(1f).height(40.dp),
+                    contentPadding = PaddingValues(horizontal = 4.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = OnmyojiIndigo),
+                ) { Text("🎴 Train", fontSize = 12.sp, maxLines = 1) }
+                Button(
+                    onClick = { onAct(ActRequest(action = "work")) },
+                    enabled = !loading,
+                    modifier = Modifier.weight(1f).height(40.dp),
+                    contentPadding = PaddingValues(horizontal = 4.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = OnmyojiIndigo),
+                ) { Text("💰 Work", fontSize = 12.sp, maxLines = 1) }
+            }
             if (journey.entities.isNotEmpty()) {
                 Spacer(modifier = Modifier.height(4.dp))
                 OutlinedButton(
@@ -455,11 +503,17 @@ private fun JourneyScreen(
             modifier = Modifier.fillMaxWidth(),
         ) {
             Text(
-                "💬 Dialogue with Aiko, spirits, and the narrator arrives in the next build — meanwhile travel, rest, search, and rituals all work above ♡",
+                "💬 The narrator's full voice arrives in the next build — meanwhile you can already talk below ♡",
                 color = ShoujoText, style = MaterialTheme.typography.bodySmall,
                 textAlign = TextAlign.Center, modifier = Modifier.padding(14.dp),
             )
         }
+
+        TalkCard(
+            journey = journey,
+            loading = loading,
+            onTalk = onTalk,
+        )
 
         if (loading) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -511,6 +565,76 @@ private fun JourneyScreen(
                 },
                 dismissButton = {
                     TextButton(onClick = { showTravel = false }) { Text("Stay") }
+                },
+            )
+        }
+
+        if (showTalk) {
+            var pickedTarget by remember { mutableStateOf(journey.entities.firstOrNull()?.id ?: "") }
+            AlertDialog(
+                onDismissRequest = { showTalk = false },
+                title = { Text("💬 Greet someone", fontWeight = FontWeight.Bold) },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        journey.entities.forEach { e ->
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                androidx.compose.material3.RadioButton(
+                                    selected = pickedTarget == e.id,
+                                    onClick = { pickedTarget = e.id },
+                                )
+                                TextButton(onClick = { pickedTarget = e.id }) {
+                                    Text("${if (e.kind == "spirit") "👻" else "🧑"} ${e.name.ifBlank { e.id }}")
+                                }
+                            }
+                        }
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            onAct(ActRequest(action = "talk", target = pickedTarget))
+                            showTalk = false
+                        },
+                        enabled = pickedTarget.isNotBlank() && !loading,
+                    ) { Text("Greet") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showTalk = false }) { Text("Cancel") }
+                },
+            )
+        }
+
+        if (showTrain) {
+            var pickedSkill by remember { mutableStateOf("divination") }
+            AlertDialog(
+                onDismissRequest = { showTrain = false },
+                title = { Text("🎴 Train an art (1 day)", fontWeight = FontWeight.Bold) },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        listOf("divination", "wards", "binding", "purification", "banishing").forEach { s ->
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                androidx.compose.material3.RadioButton(
+                                    selected = pickedSkill == s,
+                                    onClick = { pickedSkill = s },
+                                )
+                                TextButton(onClick = { pickedSkill = s }) {
+                                    Text("$s · lvl ${journey.skills[s] ?: 0}")
+                                }
+                            }
+                        }
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            onAct(ActRequest(action = "train", skill = pickedSkill))
+                            showTrain = false
+                        },
+                        enabled = !loading,
+                    ) { Text("Train") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showTrain = false }) { Text("Cancel") }
                 },
             )
         }
@@ -592,6 +716,88 @@ private fun VitalBar(label: String, value: Int, max: Int, color: Color) {
                     .background(color, RoundedCornerShape(5.dp)),
             )
         }
+    }
+}
+
+@Composable
+private fun TalkCard(
+    journey: JourneyState,
+    loading: Boolean,
+    onTalk: (String, String) -> Unit,
+) {
+    var target by remember(journey.entities) { mutableStateOf("aiko") }
+    var draft by remember { mutableStateOf("") }
+    // If the picked target vanishes (faded away), fall back to Aiko.
+    if (target != "aiko" && journey.entities.none { it.id == target }) {
+        target = "aiko"
+    }
+    StateCard(title = "💬 Talk") {
+        if (journey.dialogue.isEmpty()) {
+            Text("No words exchanged yet.", color = ShoujoText.copy(alpha = 0.6f),
+                style = MaterialTheme.typography.bodySmall)
+        } else {
+            journey.dialogue.takeLast(8).forEach { line ->
+                val who = when (line.who) {
+                    "you" -> "You"
+                    "aiko" -> "🐱 Aiko"
+                    else -> "💬 ${line.who}"
+                }
+                Text(
+                    "$who: ${line.text}",
+                    color = if (line.who == "you") ShoujoText.copy(alpha = 0.8f) else ShoujoText,
+                    style = MaterialTheme.typography.bodySmall,
+                    fontWeight = if (line.who == "you") FontWeight.Normal else FontWeight.Bold,
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+            }
+        }
+        Spacer(modifier = Modifier.height(4.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            TalkTargetChip(label = "🐱 Aiko", selected = target == "aiko", onClick = { target = "aiko" })
+            journey.entities.forEach { e ->
+                val label = "${if (e.kind == "spirit") "👻" else "🧑"} ${e.name.ifBlank { e.id }}"
+                TalkTargetChip(label = label, selected = target == e.id, onClick = { target = e.id })
+            }
+        }
+        Spacer(modifier = Modifier.height(6.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            OutlinedTextField(
+                value = draft,
+                onValueChange = { if (it.length <= 500) draft = it },
+                placeholder = { Text("Say something…") },
+                modifier = Modifier.weight(1f),
+                maxLines = 3,
+                singleLine = false,
+            )
+            Spacer(modifier = Modifier.size(8.dp))
+            Button(
+                onClick = {
+                    onTalk(target, draft.trim())
+                    draft = ""
+                },
+                enabled = !loading && draft.trim().isNotEmpty(),
+                colors = ButtonDefaults.buttonColors(containerColor = OnmyojiIndigo),
+            ) { Text("Send") }
+        }
+    }
+}
+
+@Composable
+private fun TalkTargetChip(label: String, selected: Boolean, onClick: () -> Unit) {
+    if (selected) {
+        Button(
+            onClick = {},
+            enabled = false,
+            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+        ) { Text(label, fontSize = 12.sp, maxLines = 1) }
+    } else {
+        OutlinedButton(
+            onClick = onClick,
+            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+        ) { Text(label, fontSize = 12.sp, maxLines = 1) }
     }
 }
 
