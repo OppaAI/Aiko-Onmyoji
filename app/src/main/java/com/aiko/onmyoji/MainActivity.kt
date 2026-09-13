@@ -8,6 +8,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -363,26 +364,29 @@ private fun JourneyScreen(
         StateCard(title = "🧭 Act") {
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 Button(
                     onClick = { showTravel = true },
                     enabled = !loading,
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.weight(1f).height(40.dp),
+                    contentPadding = PaddingValues(horizontal = 4.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = OnmyojiIndigo),
-                ) { Text("Travel") }
+                ) { Text("Travel", fontSize = 12.sp, maxLines = 1) }
                 Button(
                     onClick = { onAct(ActRequest(action = "rest")) },
                     enabled = !loading,
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.weight(1f).height(40.dp),
+                    contentPadding = PaddingValues(horizontal = 4.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = OnmyojiIndigo),
-                ) { Text("😴 Rest") }
+                ) { Text("😴 Rest", fontSize = 12.sp, maxLines = 1) }
                 Button(
                     onClick = { onAct(ActRequest(action = "search")) },
                     enabled = !loading,
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.weight(1f).height(40.dp),
+                    contentPadding = PaddingValues(horizontal = 4.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = OnmyojiIndigo),
-                ) { Text("🔍 Search") }
+                ) { Text("🔍 Search", fontSize = 12.sp, maxLines = 1) }
             }
             if (journey.entities.isNotEmpty()) {
                 Spacer(modifier = Modifier.height(4.dp))
