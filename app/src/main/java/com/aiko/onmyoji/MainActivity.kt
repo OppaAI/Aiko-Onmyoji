@@ -44,10 +44,14 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
+import android.content.Context
+import java.io.File
+import kotlinx.serialization.encodeToString
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -99,8 +103,13 @@ private val RITUAL_MP = mapOf("ward" to 1, "bind" to 2, "purify" to 2, "banish" 
 
 class MainActivity : ComponentActivity() {
 
+    companion object {
+        var contextReference: Context? = null
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        contextReference = applicationContext
         enableEdgeToEdge()
         setContent {
             AikoOnmyojiTheme {
@@ -147,6 +156,36 @@ fun OnmyojiApp(api: OnmyojiApi, baseUrl: String, modifier: Modifier = Modifier) 
         } catch (_: Exception) {
             false
         }
+
+        // Try to load cached state on startup
+        withContext(Dispatchers.IO) {
+            try {
+                val context = MainActivity.contextReference
+                if (context != null) {
+                    val file = File(context.filesDir, "saved_journey.json")
+                    if (file.exists()) {
+                        val jsonStr = file.readText()
+                        val savedState = Json.decodeFromString<JourneyState>(jsonStr)
+                        journey = savedState
+                        screen = Screen.Journey
+                    }
+                }
+            } catch (_: Exception) {}
+        }
+    }
+
+    fun saveJourneyState(state: JourneyState?) {
+        if (state == null) return
+        scope.launch(Dispatchers.IO) {
+            try {
+                val context = MainActivity.contextReference
+                if (context != null) {
+                    val file = File(context.filesDir, "saved_journey.json")
+                    val jsonStr = Json.encodeToString(state)
+                    file.writeText(jsonStr)
+                }
+            } catch (_: Exception) {}
+        }
     }
 
     suspend fun refresh(): Boolean {
@@ -163,7 +202,7 @@ fun OnmyojiApp(api: OnmyojiApi, baseUrl: String, modifier: Modifier = Modifier) 
     Column(
         modifier = modifier
             .fillMaxSize()
-            .background(OnmyojiIndigo.copy(alpha = 0.08f))
+            .background(Color(0xFFFFF0F5)) // Light Pink background
             .padding(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
@@ -194,7 +233,9 @@ fun OnmyojiApp(api: OnmyojiApi, baseUrl: String, modifier: Modifier = Modifier) 
                         error = null
                         events = emptyList()
                         try {
-                            journey = withContext(Dispatchers.IO) { api.start(StartRequest()) }
+                            val state = withContext(Dispatchers.IO) { api.start(StartRequest()) }
+                            journey = state
+                            saveJourneyState(state)
                             screen = Screen.Journey
                         } catch (e: Exception) {
                             error = e.message ?: "Could not start the journey."
@@ -223,6 +264,7 @@ fun OnmyojiApp(api: OnmyojiApi, baseUrl: String, modifier: Modifier = Modifier) 
                                 try {
                                     val res = withContext(Dispatchers.IO) { api.act(req) }
                                     journey = res.journey
+                                    saveJourneyState(res.journey)
                                     events = res.events
                                     error = null
                                 } catch (e: Exception) {
@@ -239,6 +281,7 @@ fun OnmyojiApp(api: OnmyojiApi, baseUrl: String, modifier: Modifier = Modifier) 
                                         api.talk(TalkRequest(target = target, message = message))
                                     }
                                     journey = res.journey
+                                    saveJourneyState(res.journey)
                                     error = null
                                 } catch (e: Exception) {
                                     error = e.message ?: "Talk failed."
@@ -387,48 +430,25 @@ private fun JourneyScreen(
         // Stats Row (Smaller)
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
             Column(modifier = Modifier.weight(1f)) {
                 VitalBar(label = "HP", value = journey.hp, max = journey.max_hp, color = Color(0xFFE57373))
                 Spacer(modifier = Modifier.height(2.dp))
                 VitalBar(label = "MP", value = journey.mp, max = journey.max_mp, color = PastelBlue)
             }
-            Column(modifier = Modifier.weight(1f), horizontalAlignment = Alignment.End) {
+            Column(modifier = Modifier.weight(0.6f), horizontalAlignment = Alignment.End) {
                 Text(
-                    "Bond: ${journey.bond}",
+                    "Bond ${journey.bond} · ${moralRank(journey.morality)}",
                     style = MaterialTheme.typography.labelSmall,
                     color = OnmyojiIndigo,
                     fontWeight = FontWeight.Bold
                 )
-                Text(
-                    "Moral: ${moralRank(journey.morality)}",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = ShoujoText
-                )
             }
         }
 
-        Spacer(modifier = Modifier.height(8.dp))
-
-        // Events / Summary (Collapsible or small)
-        if (events.isNotEmpty() || journey.journey_summary.isNotBlank()) {
-            val display = if (events.isNotEmpty()) events.last() else journey.journey_summary
-            Card(
-                shape = RoundedCornerShape(12.dp),
-                colors = CardDefaults.cardColors(containerColor = PastelPurple.copy(alpha = 0.5f)),
-                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
-            ) {
-                Text(
-                    display,
-                    modifier = Modifier.padding(8.dp),
-                    style = MaterialTheme.typography.bodySmall,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                    color = ShoujoText
-                )
-            }
-        }
+        Spacer(modifier = Modifier.height(4.dp))
 
         // --- Main Chat Area ---
         Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
@@ -500,95 +520,23 @@ private fun JourneyScreen(
                 OutlinedButton(
                     onClick = { showRitual = true },
                     enabled = !loading,
-                    modifier = Modifier.fillMaxWidth().height(40.dp),
-                    shape = RoundedCornerShape(12.dp)
+                    modifier = Modifier.fillMaxWidth().height(36.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    contentPadding = PaddingValues(0.dp)
                 ) {
-                    Text("🪬 Cast Ritual", fontSize = 12.sp)
+                    Text("🪬 Cast Ritual", fontSize = 11.sp)
                 }
             }
         }
-
-
-        StateCard(title = "🐱 Aiko · bond ${journey.bond}") {
-            if (journey.standing_orders.isEmpty()) {
-                Text("No standing orders — she acts on her own initiative.",
-                    color = ShoujoText.copy(alpha = 0.75f), style = MaterialTheme.typography.bodySmall)
-            } else {
-                journey.standing_orders.forEach {
-                    Text("• $it", color = ShoujoText, style = MaterialTheme.typography.bodySmall)
-                }
-            }
-        }
-
-        StateCard(title = "🎒 Inventory (${journey.inventory.size})") {
-            Text(
-                if (journey.inventory.isEmpty()) "(empty)" else journey.inventory.joinToString(" · "),
-                color = ShoujoText, style = MaterialTheme.typography.bodySmall,
-            )
-        }
-
-        if (journey.standing.isNotEmpty()) {
-            StateCard(title = "⚖️ Standing") {
-                journey.standing.forEach { (k, v) ->
-                    Text("$k: $v", color = ShoujoText, style = MaterialTheme.typography.bodySmall)
-                }
-            }
-        }
-
-        StateCard(title = "👥 Known (${journey.entities.size})") {
-            if (journey.entities.isEmpty()) {
-                Text("No one met yet — the road awaits.", color = ShoujoText.copy(alpha = 0.75f),
-                    style = MaterialTheme.typography.bodySmall)
-            } else {
-                journey.entities.forEach { e ->
-                    val face = if (e.kind == "spirit") "👻" else "🧑"
-                    val who = e.name.ifBlank { "(unnamed)" }
-                    Text(
-                        "$face $who — ${e.role}".trim(),
-                        color = ShoujoText, style = MaterialTheme.typography.bodySmall,
-                    )
-                }
-            }
-        }
-
-        if (journey.journey_summary.isNotBlank()) {
-            StateCard(title = "📖 Journey so far") {
-                Text(journey.journey_summary, color = ShoujoText, style = MaterialTheme.typography.bodySmall)
-            }
-        }
-
-        Card(
-            shape = RoundedCornerShape(20.dp),
-            colors = CardDefaults.cardColors(containerColor = PastelPurple),
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Text(
-                "💬 The narrator's full voice arrives in the next build — meanwhile you can already talk below ♡",
-                color = ShoujoText, style = MaterialTheme.typography.bodySmall,
-                textAlign = TextAlign.Center, modifier = Modifier.padding(14.dp),
-            )
-        }
-
-        TalkCard(
-            journey = journey,
-            loading = loading,
-            onTalk = onTalk,
-        )
 
         if (loading) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 4.dp)) {
                 CircularProgressIndicator(modifier = Modifier.size(20.dp))
                 Spacer(modifier = Modifier.size(8.dp))
                 Text("The road unfolds…", color = ShoujoText)
             }
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-            OutlinedButton(onClick = onBack) { Text("Title") }
-            Button(onClick = onRefresh, enabled = !loading,
-                colors = ButtonDefaults.buttonColors(containerColor = OnmyojiIndigo)) {
-                Text(if (loading) "…" else "↻ Refresh")
-            }
-        }
+        Spacer(modifier = Modifier.height(16.dp))
         Spacer(modifier = Modifier.height(16.dp))
 
         if (showTravel) {
@@ -901,8 +849,12 @@ private fun TalkCard(
 @Composable
 private fun ChatBubble(line: DialogueLine, isMe: Boolean) {
     val alignment = if (isMe) Alignment.End else Alignment.Start
-    val bgColor = if (isMe) OnmyojiIndigo.copy(alpha = 0.1f) else Color.White
-    val borderColor = if (isMe) OnmyojiIndigo.copy(alpha = 0.3f) else Color.LightGray.copy(alpha = 0.5f)
+    val bgColor = when (line.who) {
+        "you" -> Color(0xFFE8F5E9) // Light Green
+        "aiko" -> Color(0xFFFFD1DC) // Medium Pink (Shoujo Pink)
+        else -> Color.White
+    }
+    val borderColor = if (isMe) Color(0xFFA5D6A7) else Color.LightGray.copy(alpha = 0.5f)
 
     Column(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
@@ -935,6 +887,24 @@ private fun ChatBubble(line: DialogueLine, isMe: Boolean) {
                 style = MaterialTheme.typography.bodyMedium,
                 color = ShoujoText
             )
+        }
+    }
+}
+
+@Composable
+private fun CompactInfoBox(title: String, content: String, modifier: Modifier = Modifier) {
+    Card(
+        modifier = modifier,
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.8f)),
+        border = BorderStroke(1.dp, OnmyojiIndigo.copy(alpha = 0.1f))
+    ) {
+        Column(
+            modifier = Modifier.padding(8.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(title, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = OnmyojiIndigo)
+            Text(content, style = MaterialTheme.typography.bodySmall, color = ShoujoText, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
 }
