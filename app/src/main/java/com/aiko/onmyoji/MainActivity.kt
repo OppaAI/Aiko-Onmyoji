@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -214,6 +215,7 @@ fun OnmyojiApp(api: OnmyojiApi, baseUrl: String, onBaseUrlChange: (String) -> Un
         modifier = modifier
             .fillMaxSize()
             .background(Color(0xFFFFF0F5)) // Light Pink background
+            .imePadding() // keep the chat bar above the phone keyboard
             .padding(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
