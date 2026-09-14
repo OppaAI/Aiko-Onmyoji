@@ -113,12 +113,21 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             AikoOnmyojiTheme {
-                // Baked in at build time from AIKO_PUBLIC_BASE_URL
-                // (see local.properties → BuildConfig). No in-app override.
-                val baseUrl = remember { ServerConfig.get() }
+                val prefs = remember { applicationContext.getSharedPreferences("aiko_prefs",
+                    MODE_PRIVATE
+                ) }
+                var baseUrl by remember { mutableStateOf(prefs.getString("server_url", ServerConfig.get()) ?: ServerConfig.get()) }
                 val api = remember(baseUrl) { buildApi(baseUrl) }
                 Scaffold(modifier = Modifier.fillMaxSize()) { padding ->
-                    OnmyojiApp(api = api, baseUrl = baseUrl, modifier = Modifier.padding(padding))
+                    OnmyojiApp(
+                        api = api,
+                        baseUrl = baseUrl,
+                        onBaseUrlChange = { newUrl ->
+                            baseUrl = newUrl
+                            prefs.edit().putString("server_url", newUrl).apply()
+                        },
+                        modifier = Modifier.padding(padding)
+                    )
                 }
             }
         }
@@ -141,13 +150,15 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun OnmyojiApp(api: OnmyojiApi, baseUrl: String, modifier: Modifier = Modifier) {
+fun OnmyojiApp(api: OnmyojiApi, baseUrl: String, onBaseUrlChange: (String) -> Unit, modifier: Modifier = Modifier) {
     var screen by remember { mutableStateOf(Screen.Title) }
     var journey by remember { mutableStateOf<JourneyState?>(null) }
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var backendOk by remember { mutableStateOf<Boolean?>(null) }
     var events by remember { mutableStateOf(listOf<String>()) }
+    var showUrlEditor by remember { mutableStateOf(false) }
+    var urlInput by remember { mutableStateOf(baseUrl) }
     val scope = rememberCoroutineScope()
 
     LaunchedEffect(baseUrl) {
@@ -206,27 +217,59 @@ fun OnmyojiApp(api: OnmyojiApi, baseUrl: String, modifier: Modifier = Modifier) 
             .padding(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Text(
-            "Aiko Onmyoji ♡⛩️",
-            style = MaterialTheme.typography.headlineSmall,
-            fontWeight = FontWeight.ExtraBold,
-            color = OnmyojiIndigo,
-        )
-        Text(
-            "Sengoku · ${ServerConfig.displayHost(baseUrl)}" +
-                when (backendOk) {
-                    true -> " · ✅"
-                    false -> " · offline"
-                    null -> ""
-                },
-            style = MaterialTheme.typography.bodySmall,
-            color = ShoujoText.copy(alpha = 0.7f),
-        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "Aiko Onmyoji ♡⛩️",
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.ExtraBold,
+                color = OnmyojiIndigo,
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            TextButton(onClick = { showUrlEditor = !showUrlEditor }) {
+                Text(if (showUrlEditor) "Done" else "⚙️ Config Server", fontSize = 12.sp)
+            }
+        }
+        if (showUrlEditor) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+            ) {
+                OutlinedTextField(
+                    value = urlInput,
+                    onValueChange = { urlInput = it },
+                    label = { Text("Aiko Server URL") },
+                    modifier = Modifier.weight(1f),
+                    singleLine = true,
+                    shape = RoundedCornerShape(8.dp)
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Button(onClick = {
+                    val cleanUrl = ServerConfig.normalize(urlInput)
+                    onBaseUrlChange(cleanUrl)
+                    showUrlEditor = false
+                }) {
+                    Text("Save")
+                }
+            }
+        } else {
+            Text(
+                "Sengoku · ${ServerConfig.displayHost(baseUrl)}" +
+                    when (backendOk) {
+                        true -> " · ✅ Connected"
+                        false -> " · ❌ Offline (Tap Config Server to adjust IP/URL)"
+                        null -> ""
+                    },
+                style = MaterialTheme.typography.bodySmall,
+                color = if (backendOk == true) OnmyojiIndigo else Color(0xFFC62828),
+                fontWeight = FontWeight.Bold
+            )
+        }
         Spacer(modifier = Modifier.height(8.dp))
 
         when (screen) {
             Screen.Title -> TitleScreen(
                 loading = loading,
+                modifier = Modifier.weight(1f),
                 onNewJourney = {
                     scope.launch {
                         loading = true
@@ -245,7 +288,8 @@ fun OnmyojiApp(api: OnmyojiApi, baseUrl: String, modifier: Modifier = Modifier) 
                 },
             )
             Screen.Journey -> {
-                Column(modifier = Modifier.fillMaxSize()) {
+                // weight(1f) reserves room below so the error card stays visible.
+                Column(modifier = Modifier.weight(1f).fillMaxWidth()) {
                     JourneyScreen(
                         api = api,
                         journey = journey,
@@ -313,12 +357,12 @@ fun OnmyojiApp(api: OnmyojiApi, baseUrl: String, modifier: Modifier = Modifier) 
 }
 
 @Composable
-private fun TitleScreen(loading: Boolean, onNewJourney: () -> Unit) {
+private fun TitleScreen(loading: Boolean, onNewJourney: () -> Unit, modifier: Modifier = Modifier) {
     val scroll = rememberScrollState()
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(10.dp),
-        modifier = Modifier.fillMaxWidth().verticalScroll(scroll),
+        modifier = modifier.fillMaxWidth().verticalScroll(scroll),
     ) {
         Spacer(modifier = Modifier.height(24.dp))
         Text("⛩️", fontSize = 64.sp)
@@ -536,8 +580,7 @@ private fun JourneyScreen(
                 Text("The road unfolds…", color = ShoujoText)
             }
         }
-        Spacer(modifier = Modifier.height(16.dp))
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(8.dp))
 
         if (showTravel) {
             var picked by remember(journey.location) { mutableStateOf<String?>(null) }
@@ -738,14 +781,14 @@ private fun QuickActionButton(
     Button(
         onClick = onClick,
         enabled = enabled,
-        modifier = modifier.height(44.dp),
+        modifier = modifier.height(48.dp),
         colors = ButtonDefaults.buttonColors(containerColor = OnmyojiIndigo),
         shape = RoundedCornerShape(12.dp),
-        contentPadding = PaddingValues(horizontal = 4.dp)
+        contentPadding = PaddingValues(horizontal = 6.dp)
     ) {
-        Icon(icon, contentDescription = null, modifier = Modifier.size(16.dp))
+        Icon(icon, contentDescription = null, modifier = Modifier.size(18.dp))
         Spacer(modifier = Modifier.width(4.dp))
-        Text(text, fontSize = 11.sp, maxLines = 1)
+        Text(text, fontSize = 14.sp, maxLines = 1, fontWeight = FontWeight.Bold)
     }
 }
 
@@ -755,7 +798,7 @@ private fun TalkCard(
     loading: Boolean,
     onTalk: (String, String) -> Unit,
 ) {
-    var target by remember(journey.entities) { mutableStateOf("aiko") }
+    var target by remember { mutableStateOf("aiko") }
     var draft by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
 
@@ -766,8 +809,12 @@ private fun TalkCard(
         }
     }
 
-    if (target != "aiko" && journey.entities.none { it.id == target }) {
-        target = "aiko"
+    // Fall back to Aiko if the previous target is no longer around.
+    // (Done in an effect, never as a state write during composition.)
+    LaunchedEffect(journey.entities) {
+        if (target != "aiko" && journey.entities.none { it.id == target }) {
+            target = "aiko"
+        }
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
@@ -914,8 +961,8 @@ private fun CompactInfoBox(title: String, content: String, modifier: Modifier = 
 private fun TalkTargetChip(label: String, selected: Boolean, onClick: () -> Unit) {
     if (selected) {
         Button(
-            onClick = {},
-            enabled = false,
+            onClick = onClick,
+            colors = ButtonDefaults.buttonColors(containerColor = OnmyojiIndigo),
             contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
         ) { Text(label, fontSize = 12.sp, maxLines = 1) }
     } else {
