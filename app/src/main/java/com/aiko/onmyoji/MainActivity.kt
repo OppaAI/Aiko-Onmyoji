@@ -93,6 +93,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
+import retrofit2.HttpException
 import retrofit2.Retrofit
 import retrofit2.converter.kotlinx.serialization.asConverterFactory
 import java.util.concurrent.TimeUnit
@@ -200,9 +201,25 @@ fun OnmyojiApp(api: OnmyojiApi, baseUrl: String, onBaseUrlChange: (String) -> Un
         }
     }
 
+    /** Run an authed journey call. The server keeps journeys in RAM, so after
+     * a restart every journey endpoint is 404 "no journey". On a 404, start
+     * fresh once and retry the original call instead of stranding the user
+     * on an error card. Other errors propagate to the caller's handler. */
+    suspend fun <T> withJourney(block: suspend () -> T): T {
+        try {
+            return block()
+        } catch (e: HttpException) {
+            if (e.code() != 404) throw e
+        }
+        val fresh = withContext(Dispatchers.IO) { api.start(StartRequest()) }
+        journey = fresh
+        saveJourneyState(fresh)
+        return block()
+    }
+
     suspend fun refresh(): Boolean {
         return try {
-            journey = withContext(Dispatchers.IO) { api.state() }
+            journey = withJourney { withContext(Dispatchers.IO) { api.state() } }
             error = null
             true
         } catch (e: Exception) {
@@ -308,7 +325,7 @@ fun OnmyojiApp(api: OnmyojiApi, baseUrl: String, onBaseUrlChange: (String) -> Un
                             scope.launch {
                                 loading = true
                                 try {
-                                    val res = withContext(Dispatchers.IO) { api.act(req) }
+                                    val res = withJourney { withContext(Dispatchers.IO) { api.act(req) } }
                                     journey = res.journey
                                     saveJourneyState(res.journey)
                                     events = res.events
@@ -323,8 +340,10 @@ fun OnmyojiApp(api: OnmyojiApi, baseUrl: String, onBaseUrlChange: (String) -> Un
                             scope.launch {
                                 loading = true
                                 try {
-                                    val res = withContext(Dispatchers.IO) {
-                                        api.talk(TalkRequest(target = target, message = message))
+                                    val res = withJourney {
+                                        withContext(Dispatchers.IO) {
+                                            api.talk(TalkRequest(target = target, message = message))
+                                        }
                                     }
                                     journey = res.journey
                                     saveJourneyState(res.journey)
