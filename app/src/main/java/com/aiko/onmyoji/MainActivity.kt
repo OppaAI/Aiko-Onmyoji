@@ -80,6 +80,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.aiko.onmyoji.data.ServerConfig
 import com.aiko.onmyoji.data.model.ActRequest
+import com.aiko.onmyoji.data.model.Entity
 import com.aiko.onmyoji.data.model.JourneyState
 import com.aiko.onmyoji.data.model.StartRequest
 import com.aiko.onmyoji.data.model.TalkRequest
