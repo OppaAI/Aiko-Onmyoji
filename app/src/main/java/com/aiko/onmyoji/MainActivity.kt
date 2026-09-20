@@ -5,6 +5,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.background
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -70,6 +71,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -158,6 +161,7 @@ fun OnmyojiApp(api: OnmyojiApi, baseUrl: String, onBaseUrlChange: (String) -> Un
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var backendOk by remember { mutableStateOf<Boolean?>(null) }
+    var localMode by remember { mutableStateOf(false) }
     var events by remember { mutableStateOf(listOf<String>()) }
     var showUrlEditor by remember { mutableStateOf(false) }
     var urlInput by remember { mutableStateOf(baseUrl) }
@@ -300,7 +304,10 @@ fun OnmyojiApp(api: OnmyojiApi, baseUrl: String, onBaseUrlChange: (String) -> Un
                             saveJourneyState(state)
                             screen = Screen.Journey
                         } catch (e: Exception) {
-                            error = e.message ?: "Could not start the journey."
+                            journey = demoStart()
+                            localMode = true
+                            screen = Screen.Journey
+                            error = "Offline slice loaded — connect the Aiko server later for live LLM voices."
                         }
                         loading = false
                     }
@@ -325,13 +332,23 @@ fun OnmyojiApp(api: OnmyojiApi, baseUrl: String, onBaseUrlChange: (String) -> Un
                             scope.launch {
                                 loading = true
                                 try {
-                                    val res = withJourney { withContext(Dispatchers.IO) { api.act(req) } }
-                                    journey = res.journey
-                                    saveJourneyState(res.journey)
-                                    events = res.events
+                                    if (localMode) {
+                                        val result = demoAct(journey ?: demoStart(), req)
+                                        journey = result.first
+                                        events = result.second
+                                    } else {
+                                        val res = withJourney { withContext(Dispatchers.IO) { api.act(req) } }
+                                        journey = res.journey
+                                        saveJourneyState(res.journey)
+                                        events = res.events
+                                    }
                                     error = null
                                 } catch (e: Exception) {
-                                    error = e.message ?: "Action failed."
+                                    localMode = true
+                                    val result = demoAct(journey ?: demoStart(), req)
+                                    journey = result.first
+                                    events = result.second
+                                    error = "The road went quiet; continuing in offline mode."
                                 }
                                 loading = false
                             }
@@ -340,16 +357,20 @@ fun OnmyojiApp(api: OnmyojiApi, baseUrl: String, onBaseUrlChange: (String) -> Un
                             scope.launch {
                                 loading = true
                                 try {
-                                    val res = withJourney {
-                                        withContext(Dispatchers.IO) {
-                                            api.talk(TalkRequest(target = target, message = message))
+                                    if (localMode) {
+                                        journey = demoTalk(journey ?: demoStart(), target, message)
+                                    } else {
+                                        val res = withJourney {
+                                            withContext(Dispatchers.IO) { api.talk(TalkRequest(target = target, message = message)) }
                                         }
+                                        journey = res.journey
+                                        saveJourneyState(res.journey)
                                     }
-                                    journey = res.journey
-                                    saveJourneyState(res.journey)
                                     error = null
                                 } catch (e: Exception) {
-                                    error = e.message ?: "Talk failed."
+                                    localMode = true
+                                    journey = demoTalk(journey ?: demoStart(), target, message)
+                                    error = "The narrator is offline; Aiko answers from the known scene."
                                 }
                                 loading = false
                             }
@@ -491,6 +512,8 @@ private fun JourneyScreen(
                 }
             }
         }
+
+        WorldMapCard(journey = journey, modifier = Modifier.fillMaxWidth().height(190.dp))
 
         // Stats Row (Smaller)
         Row(
@@ -760,6 +783,44 @@ private fun JourneyScreen(
             )
         }
     }
+}
+
+
+@Composable
+private fun WorldMapCard(journey: JourneyState, modifier: Modifier = Modifier) {
+    val points = mapOf("Kyoto" to Pair(.18f, .48f), "Azuchi" to Pair(.58f, .30f), "Osaka" to Pair(.38f, .68f), "Sakai" to Pair(.23f, .78f), "Kiyosu" to Pair(.80f, .25f), "Odawara" to Pair(.88f, .78f))
+    val active = points[journey.location] ?: Pair(.18f, .48f)
+    Card(modifier = modifier, shape = RoundedCornerShape(18.dp), colors = CardDefaults.cardColors(containerColor = Color(0xFF202443))) {
+        Box(Modifier.fillMaxSize()) {
+            Canvas(Modifier.fillMaxSize()) {
+                val road = Path().apply { moveTo(size.width * .10f, size.height * .76f); cubicTo(size.width * .35f, size.height * .55f, size.width * .62f, size.height * .70f, size.width * .92f, size.height * .24f) }
+                drawPath(road, Color(0xFFB7B8D6).copy(alpha = .36f), style = Stroke(width = 5f))
+                points.forEach { (_, p) -> drawCircle(Color(0xFFE8C985), 5f, center = androidx.compose.ui.geometry.Offset(size.width * p.first, size.height * p.second)) }
+                drawCircle(Color(0xFFDB6B83), 13f, center = androidx.compose.ui.geometry.Offset(size.width * active.first, size.height * active.second))
+            }
+            Text("SENGOKU ROAD · " + journey.location, color = Color(0xFFFFE9B0), style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, modifier = Modifier.padding(12.dp))
+            Text("June 1582  ·  Honno-ji draws near", color = Color.White.copy(alpha = .78f), style = MaterialTheme.typography.bodySmall, modifier = Modifier.align(Alignment.BottomStart).padding(12.dp))
+        }
+    }
+}
+
+private fun demoStart(): JourneyState = JourneyState(date = "1582-06-01", location = "Kyoto", inventory = listOf("ofuda x3", "rice ball", "silver fan"), bond = 2, journey_summary = "You arrived in Kyoto with Aiko. A fox-fire flickers near the temple district.", entities = listOf(Entity("aiko", "spirit", "Aiko", "shikigami", "playful but watchful", listOf("bound to your seal"), 1, "bonded", "1582-06-01", "Kyoto"), Entity("merchant_jiro", "human", "Jiro", "lantern merchant", "wary", listOf("saw soldiers moving east"), 0, "passing", "1582-06-01", "Kyoto")), flags = listOf("kyoto_arrival"), dialogue = listOf(DialogueLine("aiko", "you", "The city is holding its breath. I smell ash beyond the temple wall.")), hp = 10, max_hp = 10, mp = 8, max_mp = 10, skills = mapOf("divination" to 1, "wards" to 1), morality = 0)
+
+private fun demoAct(state: JourneyState, req: ActRequest): Pair<JourneyState, List<String>> {
+    val events = mutableListOf<String>(); var next = state
+    when (req.action) {
+        "travel" -> { val dest = req.to.ifBlank { "Azuchi" }; next = state.copy(date = "1582-06-02", location = dest, journey_summary = "You reached " + dest + ". The road remembers your choices.", dialogue = state.dialogue + DialogueLine("aiko", "you", dest + " is not asleep. Listen before you enter.")); events += "You travel to " + dest + "." }
+        "rest" -> { next = state.copy(hp = state.max_hp, mp = state.max_mp); events += "You rest beneath a shrine bell. HP and MP restored." }
+        "search" -> { next = state.copy(inventory = state.inventory + "smoky talisman", flags = (state.flags + ("searched_" + state.location)).distinct()); events += "You search the scene: a smoky talisman lies under a loose stone." }
+        "work" -> { next = state.copy(inventory = state.inventory + "12 mon", morality = state.morality - 1); events += "You take dubious work. You gain 12 mon; your name darkens." }
+        "train" -> { val skill = req.skill.ifBlank { "divination" }; next = state.copy(skills = state.skills + (skill to ((state.skills[skill] ?: 0) + 1))); events += "You train " + skill + "." }
+        "ritual" -> { next = state.copy(mp = (state.mp - (RITUAL_MP[req.ritual] ?: 1)).coerceAtLeast(0), flags = (state.flags + ("ritual_" + req.ritual)).distinct(), bond = state.bond + 1); events += "Your " + req.ritual + " rite changes the scene; Aiko steadies the seal." }
+        "talk" -> { next = demoTalk(state, req.target, "Tell me what you know."); events += "You open a conversation." }
+    }; return next to events
+}
+
+private fun demoTalk(state: JourneyState, target: String, message: String): JourneyState {
+    val reply = when (target) { "aiko" -> "I know only what has happened here: " + state.location + ", " + state.date + ", and the things you carry. The future is still veiled. Ask, and I will look with you."; "merchant_jiro" -> "Jiro lowers his voice. I sell lamps, not loyalties. I saw armed men pass toward Honno-ji. That is all I know."; else -> "That is a dangerous question in " + state.location + "." }; return state.copy(dialogue = state.dialogue + DialogueLine("you", target, message) + DialogueLine(target, "you", reply), bond = if (target == "aiko") state.bond + 1 else state.bond)
 }
 
 private fun moralRank(moral: Int): String = when {    moral <= -30 -> "Feared"
