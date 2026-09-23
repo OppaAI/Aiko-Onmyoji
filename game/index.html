@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Aiko Onmyoji: Sengoku Spirits</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div id="app">
+  <header id="topbar">
+    <span id="game-title">🦊 Aiko Onmyoji: Sengoku Spirits</span>
+    <span id="hud-loc">—</span>
+    <span id="hud-date">—</span>
+    <span id="hud-gold">—</span>
+    <span id="hud-karma">—</span>
+    <span id="hud-hp">—</span>
+    <button id="btn-menu" title="Menu">☰</button>
+  </header>
+  <div id="main">
+    <section id="stage-wrap">
+      <canvas id="stage" width="768" height="576"></canvas>
+      <div id="toast"></div>
+      <div id="panel" class="hidden"></div>
+      <div id="dpad">
+        <button data-dir="up">▲</button>
+        <div><button data-dir="left">◀</button><button data-dir="down">▼</button><button data-dir="right">▶</button></div>
+      </div>
+    </section>
+    <aside id="side">
+      <div id="aiko-head">
+        <canvas id="aiko-face" width="96" height="96"></canvas>
+        <div><b>Aiko</b><div id="aiko-mood">your shikigami</div></div>
+      </div>
+      <div id="chatlog"></div>
+      <input id="chatinput" type="text" placeholder="Talk to Aiko…" maxlength="300" autocomplete="off">
+    </aside>
+  </div>
+  <footer id="cmdbar">
+    <div id="quick-actions"></div>
+    <div id="cmdrow">
+      <input id="cmdinput" type="text" placeholder="Command: go north · travel east · talk to iroha · recruit tetsuzo · bind wolf · enter the bar · missions · help" maxlength="200" autocomplete="off">
+      <button id="btn-cmd">➤</button>
+    </div>
+  </footer>
+</div>
+<noscript>This game requires JavaScript.</noscript>
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
