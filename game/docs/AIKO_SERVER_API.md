@@ -33,7 +33,13 @@ AikoServer.generate = async ({ gameState, speaker, history }) => {
       history: history.slice(-12),
     }),
   });
+  if (!res.ok) {
+    throw new Error(`Dialogue request failed: ${res.status} ${res.statusText}`);
+  }
   const data = await res.json();
+  if (typeof data?.text !== 'string') {
+    throw new TypeError('Dialogue response must contain a string `text` field');
+  }
   return data.text; // fall back to template engine on error
 };
 ```

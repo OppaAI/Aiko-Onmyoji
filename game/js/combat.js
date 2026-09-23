@@ -75,6 +75,7 @@ export function createCombat(state, enemyIdOrObj) {
     round: 0,
     log: [`${base.name} ${base.taunt}`],
     playerBuffs: { ward: 0 },
+    playerAgiPenalty: 0,
     enemyDebuffs: { atkDown: 0 },
     enemyStun: 0,
     enemyTelegraph: null, // revealed by scout or telegraphed heavies
@@ -91,6 +92,7 @@ export function createCombat(state, enemyIdOrObj) {
 
 export function playerAttack(s) { return s.player.atk + passiveBonus(s).atk; }
 export function playerDefense(s) { return s.player.def + passiveBonus(s).def; }
+function playerAgility(c, s) { return Math.max(1, s.player.agi - (c.playerAgiPenalty || 0)); }
 
 // ---------------- player phase ----------------
 // action: {type:'attack'} | {type:'spell', id} | {type:'item', id} | {type:'flee'}
@@ -99,7 +101,7 @@ export function playerPhase(c, s, action) {
   const pAtk = playerAttack(s), pDef = playerDefense(s) + (c.playerBuffs.ward > 0 ? 6 : 0);
 
   if (action.type === 'flee') {
-    if (rand(1, 20) + s.player.agi > 10 + e.agi) {
+    if (rand(1, 20) + playerAgility(c, s) > 10 + e.agi) {
       c.fled = true; c.over = true; c.result = 'fled';
       out.push('You scatter ofuda and vanish into the treeline. Aiko follows, unimpressed.');
     } else {
@@ -232,6 +234,8 @@ export function enemyPhase(c, s) {
   const e = c.enemy, out = [];
   if (c.over) return out;
   if (c.enemyStun > 0) { c.enemyStun -= 1; out.push(`${e.name} strains against its bonds — it cannot move!`); return out; }
+  const telegraph = c.enemyTelegraph;
+  c.enemyTelegraph = null;
 
   const eAtk = Math.max(1, e.atk - (c.enemyDebuffs.atkDown > 0 ? 3 : 0));
   const pDef = playerDefense(s) + (c.playerBuffs.ward > 0 ? 6 : 0);
@@ -250,12 +254,12 @@ export function enemyPhase(c, s) {
       else out.push(`${e.name} thrusts! ${hit(eAtk, targetAiko ? 4 : pDef, targetAiko ? 'aiko' : 'player')} damage${targetAiko ? ' to Aiko!' : '.'}`);
       break;
     case 'tricky':
-      if (Math.random() < 0.3) { s.player.agi = Math.max(1, s.player.agi - 1); out.push(`${e.name} kicks dust in your eyes! Your agility falters. (−1 AGI this battle)`); }
+      if (Math.random() < 0.3) { c.playerAgiPenalty = Math.min(Math.max(0, s.player.agi - 1), (c.playerAgiPenalty || 0) + 1); out.push(`${e.name} kicks dust in your eyes! Your agility falters. (−1 AGI this battle)`); }
       else out.push(`${e.name} slashes wildly! ${hit(eAtk, targetAiko ? 4 : pDef, targetAiko ? 'aiko' : 'player')} damage${targetAiko ? ' to Aiko!' : '.'}`);
       break;
     case 'heavy': {
       const intent = enemyIntent(c);
-      if (c.enemyTelegraph || intent.heavy) {
+      if (telegraph?.heavy === true || intent.heavy) {
         const d = hit(eAtk + 6, targetAiko ? 4 : pDef, targetAiko ? 'aiko' : 'player');
         out.push(`${e.name} unleashes a HEAVY overhead cut! ${d} damage${targetAiko ? ' to Aiko!' : '!'}`);
       } else out.push(`${e.name} circles, measuring you… (a heavy strike is coming — Ward or Bind!)`);
@@ -304,18 +308,18 @@ export function doRound(c, s, action) {
   if (c.enemyDebuffs.atkDown > 0) c.enemyDebuffs.atkDown -= 1;
 
   // initiative: higher agi acts first between player and enemy
-  const pFirst = s.player.agi + rand(0, 4) >= c.enemy.agi;
+  const pFirst = playerAgility(c, s) + rand(0, 4) >= c.enemy.agi;
   const phases = pFirst
     ? [() => playerPhase(c, s, action), () => aikoPhase(c, s), () => enemyPhase(c, s)]
     : [() => enemyPhase(c, s), () => playerPhase(c, s, action), () => aikoPhase(c, s)];
 
+  let end = null;
   for (const ph of phases) {
     events.push(...ph());
-    const end = checkEnd(c, s);
+    end = checkEnd(c, s);
     if (end) break;
   }
   if (c.round % 2 === 0 && !c.over) events.push('💬 ' + battleBanter(s, c));
-  const end = checkEnd(c, s);
   return { events, end };
 }
 

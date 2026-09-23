@@ -47,6 +47,7 @@ export function newGame(playerName) {
       activeMission: null,
       pendingBattle: null, // battle id the player may join right now
       metDaimyo: {},       // fid -> true (has had an audience)
+      lastFactionAidMonth: {}, // fid -> YYYY-M of the last granted aid request
     },
   };
   return s;
@@ -64,7 +65,10 @@ export function loadGame() {
   } catch (e) { return null; }
 }
 export function hasSave() { return !!loadGame(); }
-export function clearSave() { localStorage.removeItem(SAVE_KEY); }
+export function clearSave() {
+  try { localStorage.removeItem(SAVE_KEY); }
+  catch (e) {}
+}
 
 // ---------- helpers ----------
 export const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -212,7 +216,13 @@ export function dateLabel(s) {
   return `${nengo(s.world.y, s.world.m)} (${s.world.y}), ${s.world.m}${ordinal(s.world.m)} month, ${s.world.d}${ordinal(s.world.d)} day — ${timeOfDay(s.world.hour).toLowerCase()}`;
 }
 function ordinal(n) {
-  if (n === 1) return 'st'; if (n === 2) return 'nd'; if (n === 3) return 'rd'; return 'th';
+  const value = Math.abs(n);
+  const lastTwo = value % 100;
+  if (lastTwo >= 11 && lastTwo <= 13) return 'th';
+  if (value % 10 === 1) return 'st';
+  if (value % 10 === 2) return 'nd';
+  if (value % 10 === 3) return 'rd';
+  return 'th';
 }
 
 function addDay(s) {

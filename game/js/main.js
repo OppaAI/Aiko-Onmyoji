@@ -685,6 +685,8 @@ function applyEffects(effects) {
     if (ef.flag) { let [k, v] = ef.flag; if (v === 'TODAY') v = St.dateKey(S); St.setFlag(S, k, v); }
     if (ef.memory) { const [a, b2, c] = ef.memory; St.rememberNpc(S, a, b2, c); }
     if (ef.quest) { try { Quests.setQuestStage(S, ef.quest[0], ef.quest[1]); notes.push('📜 Quest updated'); } catch {} }
+    if (ef.qchoice) { Quests.setQuestChoice(S, ef.qchoice[0], ef.qchoice[1]); }
+    if (ef.qcomplete) { Quests.completeQuest(S, ef.qcomplete); notes.push('📜 Quest complete'); }
   }
   return notes;
 }

@@ -2,10 +2,10 @@
 // NPC archetypes each speak in a DISTINCT style. Beats may be strings or
 // functions of state. Topic effects use the effect DSL interpreted by main.js:
 //   {karma:n} {gold:n} {exp:n} {bond:n} {heal:n} {item:[id,qty]} {flag:[k,v]}
-//   {quest:[qid,stage]} {qchoice:[qid,choice]} {memory:[npc,key,val]}
+//   {quest:[qid,stage]} {qchoice:[qid,choice]} {qcomplete:qid} {memory:[npc,key,val]}
 //   {discover:loc} {combat:enemyId} {aiko:'eventName'}
 
-import { karmaTier, hasItem, dateKey } from './state.js';
+import { karmaTier, hasItem, dateKey, pick } from './state.js';
 import { aikoLine } from './aiko.js';
 import { daimyoNpc } from './factions.js';
 import { EVENTS } from './history.js';
@@ -180,7 +180,10 @@ export const NPCS = {
     topics: [
       {
         id: 'toll', label: 'Confront him about the tolls',
-        need: (s) => (s.world.questFlags.kappa_toll?.stage || 0) === 0,
+        need: (s) => {
+          const q = s.world.questFlags.kappa_toll;
+          return !q?.done && (!q?.choice || q.choice === 'help');
+        },
         beats: (s) => [
           { who: 'kappa_kawataro', text: 'The fishermen? Oh, they pay! A toll a day keeps the drownings away! It\'s protection! Very legitimate! Water-legitimate!' },
           A('idle'),
@@ -193,7 +196,7 @@ export const NPCS = {
               H('A sumo match. You versus me. I win, the tolls stay. You win, the tolls end forever.'),
               { who: 'kappa_kawataro', text: 'OHO! A wager! I haven\'t been challenged since the great cucumber famine! …Wait, why did I agree to this. FINE. Let\'s splash!' },
             ],
-            effects: [{ combat: 'kappa' }, { qchoice: ['kappa_toll', 'help'] }],
+            effects: [{ qchoice: ['kappa_toll', 'help'] }, { combat: 'kappa' }],
           },
           {
             label: '💰 Exploit: take a cut of the tolls',
@@ -202,7 +205,7 @@ export const NPCS = {
               { who: 'kappa_kawataro', text: '…Half?! …You drive a hard bargain, long-legs. FINE. Partners! Shake on it! …You didn\'t bow. Rude. Profitable, but rude.' },
               A('danger'),
             ],
-            effects: [{ gold: 60 }, { karma: -12 }, { bond: -5 }, { qchoice: ['kappa_toll', 'exploit'] }, { memory: ['kappa_kawataro', 'wronged', 1] }, { flag: ['kappa_business', true] }],
+            effects: [{ gold: 60 }, { karma: -12 }, { bond: -5 }, { qchoice: ['kappa_toll', 'exploit'] }, { qcomplete: 'kappa_toll' }, { memory: ['kappa_kawataro', 'wronged', 1] }, { flag: ['kappa_business', true] }],
           },
           {
             label: '🚶 Walk away',
@@ -210,7 +213,7 @@ export const NPCS = {
               N('You turn and leave. Behind you, the kappa resumes his toll booth with renewed enthusiasm.'),
               A('neglect'),
             ],
-            effects: [{ karma: -3 }, { bond: -2 }, { qchoice: ['kappa_toll', 'abandon'] }],
+            effects: [{ karma: -3 }, { bond: -2 }, { qchoice: ['kappa_toll', 'abandon'] }, { qcomplete: 'kappa_toll' }],
           },
         ],
       },
@@ -237,7 +240,10 @@ export const NPCS = {
     topics: [
       {
         id: 'rice', label: "Hear about the widow's rice",
-        need: (s) => (s.world.questFlags.widows_rice?.stage || 0) === 0,
+        need: (s) => {
+          const q = s.world.questFlags.widows_rice;
+          return !q?.done && (!q?.choice || q.choice === 'help');
+        },
         beats: (s) => [
           { who: 'elder_mosuke', text: 'Slowly, slowly, the rice ripens… and swiftly, swiftly, the ronin steal it. A widow, Hanae, works her paddies alone since her husband fell at Okehazama.' },
           { who: 'elder_mosuke', text: '“A full granary,” the old saying goes, “invites empty hearts.” These ronin have very empty hearts, and very full sacks.' },
@@ -250,7 +256,7 @@ export const NPCS = {
             beats: (s) => [
               { who: 'elder_mosuke', text: 'The camphor bows to you, young one. They camp by the Sekigahara road. Go carefully — and come back for supper.' },
             ],
-            effects: [{ combat: 'ronin' }, { qchoice: ['widows_rice', 'help'] }],
+            effects: [{ qchoice: ['widows_rice', 'help'] }, { combat: 'ronin' }],
           },
           {
             label: '💰 Exploit: sell the village "protection" (80 gold)',
@@ -258,7 +264,7 @@ export const NPCS = {
               { who: 'elder_mosuke', text: '…Eighty gold. The village will pay. The saying goes: “When the fox guards the hens, count the hens.” We will count them.' },
               A('danger'),
             ],
-            effects: [{ gold: 80 }, { karma: -12 }, { bond: -5 }, { qchoice: ['widows_rice', 'exploit'] }, { memory: ['elder_mosuke', 'wronged', 1] }],
+            effects: [{ gold: 80 }, { karma: -12 }, { bond: -5 }, { qchoice: ['widows_rice', 'exploit'] }, { qcomplete: 'widows_rice' }, { memory: ['elder_mosuke', 'wronged', 1] }],
           },
           {
             label: '🚶 Walk away',
@@ -266,7 +272,7 @@ export const NPCS = {
               N('You leave the village to its fate. The camphor leaves rustle, disappointed.'),
               A('neglect'),
             ],
-            effects: [{ karma: -3 }, { bond: -2 }, { qchoice: ['widows_rice', 'abandon'] }],
+            effects: [{ karma: -3 }, { bond: -2 }, { qchoice: ['widows_rice', 'abandon'] }, { qcomplete: 'widows_rice' }],
           },
         ],
       },
@@ -332,7 +338,7 @@ export const NPCS = {
     topics: [
       {
         id: 'rest', label: 'Lay her to rest — or bind her',
-        need: (s) => (s.world.questFlags.restless_bride?.stage || 0) === 0,
+        need: (s) => !s.world.questFlags.restless_bride?.done,
         beats: (s) => [
           { who: 'yurei_oyuki', text: '…rest…? I… don\'t remember… how… the bell… it tolls… and I… forget his face… a little more… each time…' },
           N('Her form flickers. You could perform the rite of release — it needs sacred sake and a night visit. Or you could bind her sorrow to your service. Or leave her to the cold.'),
@@ -347,7 +353,7 @@ export const NPCS = {
               N('Petals of light rise from the offering box and scatter on the night wind. The shrine feels warmer already.'),
               A('karma_up'),
             ],
-            effects: [{ item: ['sacred_sake', -1] }, { karma: 10 }, { bond: 6 }, { exp: 80 }, { qchoice: ['restless_bride', 'help'] }, { memory: ['yurei_oyuki', 'helped', 1] }],
+            effects: [{ item: ['sacred_sake', -1] }, { karma: 10 }, { bond: 6 }, { exp: 80 }, { qchoice: ['restless_bride', 'help'] }, { qcomplete: 'restless_bride' }, { memory: ['yurei_oyuki', 'helped', 1] }],
           },
           {
             label: '⚖ Help: (need sacred sake, and visit at Night)',
@@ -363,7 +369,7 @@ export const NPCS = {
               { who: 'yurei_oyuki', text: '…as… you… command… master…' },
               A('karma_down'),
             ],
-            effects: [{ item: ['bride_charm', 1] }, { karma: -14 }, { bond: -6 }, { qchoice: ['restless_bride', 'exploit'] }, { memory: ['yurei_oyuki', 'wronged', 1] }],
+            effects: [{ item: ['bride_charm', 1] }, { karma: -14 }, { bond: -6 }, { qchoice: ['restless_bride', 'exploit'] }, { qcomplete: 'restless_bride' }, { memory: ['yurei_oyuki', 'wronged', 1] }],
           },
           {
             label: '🚶 Walk away',
@@ -371,7 +377,7 @@ export const NPCS = {
               N('You leave her kneeling in the cold. Behind you, very faintly, the weeping resumes.'),
               A('neglect'),
             ],
-            effects: [{ karma: -3 }, { bond: -2 }, { qchoice: ['restless_bride', 'abandon'] }],
+            effects: [{ karma: -3 }, { bond: -2 }, { qchoice: ['restless_bride', 'abandon'] }, { qcomplete: 'restless_bride' }],
           },
         ],
       },
@@ -836,12 +842,12 @@ export const NPCS = {
   // ---------------------------------------------------------------------------
   princess_iroha: {
     name: 'Princess Iroha', archetype: 'princess', location: 'azuchi', portrait: 'npc_princess_iroha.png',
-    adult: true, desc: 'A daughter of the Oda house, in red and gold — sharp-eyed, sharper-tongued, and utterly fearless.',
+    adult: true, desc: 'A 25-year-old daughter of the Oda house, in red and gold — sharp-eyed, sharper-tongued, and utterly fearless.',
     greet(s) {
-      return [
-      N('Princess Iroha regards you over the rim of her tea cup. "An onmyoji. How... useful you might be. Sit — if you can keep up."'),
-      N('Iroha is flying a hawk in the courtyard when you arrive. "Watch," she commands, and the bird stoops like a thunderbolt. She grins. "The Oda take what they want."'),
-      ];
+      return [pick([
+        N('Princess Iroha regards you over the rim of her tea cup. "An onmyoji. How... useful you might be. Sit — if you can keep up."'),
+        N('Iroha is flying a hawk in the courtyard when you arrive. "Watch," she commands, and the bird stoops like a thunderbolt. She grins. "The Oda take what they want."'),
+      ])];
     },
     topics: [
       {
@@ -899,12 +905,12 @@ export const NPCS = {
 
   princess_yu: {
     name: 'Princess Yū', archetype: 'princess', location: 'kofu', portrait: 'npc_princess_yu.png',
-    adult: true, desc: 'A daughter of the Takeda, in purple and gold — a horsewoman with her father\'s fire.',
+    adult: true, desc: 'A 23-year-old daughter of the Takeda, in purple and gold — a horsewoman with her father\'s fire.',
     greet(s) {
-      return [
-      N('Princess Yū is just dismounting, cheeks flushed from the ride. "You! Onmyoji! Tell me — do the spirits favor the swift or the strong?"'),
-      N('Yū is drilling with a wooden sword when you arrive, and nearly takes your head off before recognizing you. "Ha! Good reflexes. Father says a warrior is measured by their scars — and their lovers."'),
-      ];
+      return [pick([
+        N('Princess Yū is just dismounting, cheeks flushed from the ride. "You! Onmyoji! Tell me — do the spirits favor the swift or the strong?"'),
+        N('Yū is drilling with a wooden sword when you arrive, and nearly takes your head off before recognizing you. "Ha! Good reflexes. Father says a warrior is measured by their scars — and their lovers."'),
+      ])];
     },
     topics: [
       {
@@ -962,12 +968,12 @@ export const NPCS = {
   princess_setsu: {
     name: 'Princess Setsu', archetype: 'princess', location: 'kasugayama', portrait: 'npc_princess_setsu.png',
     sceneCg: 'cg_garden_moon.png',
-    adult: true, desc: 'A daughter of the Uesugi, in white and blue — serene as temple snow, with hidden depths.',
+    adult: true, desc: 'A 26-year-old daughter of the Uesugi, in white and blue — serene as temple snow, with hidden depths.',
     greet(s) {
-      return [
-      N('Princess Setsu is arranging flowers when you enter, and does not look up until the last stem is perfect. "Forgive me," she says softly. "Beauty deserves patience. ...You may sit."'),
-      N('You find Setsu at the shrine, praying before the image of Bishamonten. She finishes, bows, and turns to you with a smile like moonrise. "The god of war watches over our house. Perhaps he watches over you too, onmyoji."'),
-      ];
+      return [pick([
+        N('Princess Setsu is arranging flowers when you enter, and does not look up until the last stem is perfect. "Forgive me," she says softly. "Beauty deserves patience. ...You may sit."'),
+        N('You find Setsu at the shrine, praying before the image of Bishamonten. She finishes, bows, and turns to you with a smile like moonrise. "The god of war watches over our house. Perhaps he watches over you too, onmyoji."'),
+      ])];
     },
     topics: [
       {

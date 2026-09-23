@@ -467,11 +467,17 @@ export function daimyoNpc(s, fid, nextEventText) {
       { who: 'n', text: '(Choose a mission from the missions board — missions take days to complete.)' },
     ]));
     topics.push(T('aid', 'Request aid (gold & supplies)', (st) => {
+      const month = `${s.world.y}-${s.world.m}`;
+      const lastAidMonth = s.world.lastFactionAidMonth || (s.world.lastFactionAidMonth = {});
+      if (lastAidMonth[fid] === month) {
+        return [{ who: 'daimyo', text: 'You have already received our aid this month. Ask again when the moon turns.' }];
+      }
       const ok = repOf(s, fid) >= 20 || s.world.service.rank >= 2;
       if (ok) {
         const gold = 60 + s.world.service.rank * 40;
         s.player.gold += gold;
         changeRep(s, fid, -3);
+        lastAidMonth[fid] = month;
         return [
           { who: 'daimyo', text: voice.aid_yes(s) },
           { who: 'n', text: `You receive ${gold} gold. (Reputation -3: favors are remembered.)` },
