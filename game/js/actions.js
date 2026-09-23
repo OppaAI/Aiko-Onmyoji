@@ -68,6 +68,12 @@ function fillPlaceholders(text, ctx) {
 // ---------------------------------------------------------------------------
 // Quick actions (preset buttons).
 // allowed(npc, S) -> true | false | string reason.
+//
+// NOTE: there are intentionally NO 'kiss' / 'sex' preset buttons. The 💋 Kiss
+// and 🔞 Be intimate buttons were removed; those scenes are reached only via
+// typed commands ("kiss <name>", "sleep with <name>", ...). Their gating
+// lives on in kissAllowed()/sexAllowed() below, and all scene content,
+// beats, and choreography are untouched.
 // ---------------------------------------------------------------------------
 export const QUICK_ACTIONS = [
   {
@@ -80,16 +86,6 @@ export const QUICK_ACTIONS = [
       if (isAiko(npc)) return true;
       if (npc.hostile) return 'They refuse your hand — too hostile right now.';
       return true;
-    },
-  },
-  {
-    id: 'kiss', label: '💋 Kiss', icon: '💋',
-    allowed: (npc, S) => {
-      if (!npc.adult) return 'A kiss would be inappropriate here.';
-      const key = npcKey(npc);
-      const f = S.world.flags;
-      if (f['lover_' + key] || f['aff_' + key]) return true;
-      return 'You are not close enough for that yet.';
     },
   },
   {
@@ -112,17 +108,24 @@ export const QUICK_ACTIONS = [
     id: 'bow', label: '🙇 Bow', icon: '🙇',
     allowed: () => true,
   },
-  {
-    id: 'sex', label: '🔞 Be intimate', icon: '🔞',
-    allowed: (npc, S) => {
-      if (!npc.adult) return 'Not appropriate — strictly adults only.';
-      const key = npcKey(npc);
-      const f = S.world.flags;
-      if (!(f['lover_' + key] || f['aff_' + key])) return 'You share no such intimacy yet.';
-      return true;
-    },
-  },
 ];
+
+// Gating for the typed romance paths (no preset buttons; see note above).
+// Same rules the old buttons enforced.
+export function kissAllowed(npc, S) {
+  if (!npc.adult) return 'A kiss would be inappropriate here.';
+  const key = npcKey(npc);
+  const f = S.world.flags;
+  if (f['lover_' + key] || f['aff_' + key]) return true;
+  return 'You are not close enough for that yet.';
+}
+export function sexAllowed(npc, S) {
+  if (!npc.adult) return 'Not appropriate — strictly adults only.';
+  const key = npcKey(npc);
+  const f = S.world.flags;
+  if (!(f['lover_' + key] || f['aff_' + key])) return 'You share no such intimacy yet.';
+  return true;
+}
 
 export function quickActionById(id) {
   return QUICK_ACTIONS.find(a => a.id === id) || null;
