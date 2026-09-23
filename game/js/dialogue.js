@@ -16,6 +16,7 @@ export const ARCHETYPES = {
   samurai:  { label: 'Gruff Samurai', portrait: 'enemy_samurai.png', fallback: '⚔️' },
   elder:    { label: 'Village Elder', portrait: 'npc_elder.png',    fallback: '🧓' },
   miko:     { label: 'Shrine Maiden', portrait: 'npc_miko.png',     fallback: '⛩️' },
+  monk:     { label: 'Warrior Monk', portrait: 'npc_monk.png',     fallback: '🙏' },
   kappa:    { label: 'Kappa',         portrait: 'enemy_kappa.png',   fallback: '🐢' },
   yurei:    { label: 'Yurei',         portrait: 'enemy_yurei.png',   fallback: '👻' },
   oni:      { label: 'Oni',           portrait: 'enemy_oni.png',     fallback: '👹' },
@@ -379,7 +380,7 @@ export const NPCS = {
 
   // ---------------- MT. HIEI ----------------
   monk_enkai: {
-    name: 'Monk Enkai', archetype: 'elder', location: 'hiei',
+    name: 'Monk Enkai', archetype: 'monk', location: 'hiei',
     greet(s) {
       return [
         N('A warrior monk with a naginata polishes the temple steps with military precision.'),

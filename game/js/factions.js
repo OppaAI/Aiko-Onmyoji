@@ -131,6 +131,14 @@ function pickByDate(list, today) {
 export function currentDaimyo(s, fid) {
   return pickByDate(FACTIONS[fid].daimyo, dateKey(s));
 }
+// Per-daimyo portrait: each daimyo style has its own generated portrait
+// (game/assets/daimyo_<style>.png). Falls back to the faction's legacy portrait.
+export function daimyoPortrait(s, fid) {
+  const dm = currentDaimyo(s, fid);
+  if (dm && dm.portrait) return dm.portrait;
+  if (dm && dm.style) return 'daimyo_' + dm.style + '.png';
+  return FACTIONS[fid].portrait;
+}
 export function factionCapital(s, fid) {
   return pickByDate(FACTIONS[fid].capitals, dateKey(s)).loc;
 }
@@ -428,7 +436,6 @@ export function wireFactionHooks() {
 // Build the dynamic daimyo audience NPC for dialogue.js.
 // nextEventText: a one-line hint of the next historical event (realm gossip).
 export function daimyoNpc(s, fid, nextEventText) {
-  const def = FACTIONS[fid];
   const dm = currentDaimyo(s, fid);
   const voice = DAIMYO_VOICES[dm.style] || DAIMYO_VOICES.ieyasu;
   const fname = factionDisplayName(s, fid);
@@ -530,7 +537,7 @@ export function daimyoNpc(s, fid, nextEventText) {
     name: dm.name,
     archetype: 'daimyo',
     faction: fid,
-    portrait: def.portrait,
+    portrait: daimyoPortrait(s, fid),
     greet: (st) => {
       const lines = [
         { who: 'n', text: `You are admitted to the audience hall of ${fname}. ${dm.name} regards you.` },

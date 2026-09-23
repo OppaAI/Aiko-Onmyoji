@@ -81,3 +81,23 @@ tells you the current lord, so generate the right voice for the right year.
 
 Keep p95 latency under ~2s for dialogue; combat banter can be generated
 lazily. Cache aggressively on `(speaker, stateHash)` — most idle lines repeat.
+
+## Live implementation (`js/aiko_link.js`)
+
+The seam above is implemented live against the real Aiko-chan Onmyoji game
+server (Jetson-local FastAPI, default `http://<jetson-ip>:8090`):
+
+- **Private chat (Spirit Bond):** `POST /talk {to:"aiko", text}` — the whisper
+  panel in `main.js`. The message carries a compact context line (master name,
+  location, date, bond, karma) plus the player's words. Only the player hears
+  this channel; NPCs never see it.
+- **Aiko-proposed actions:** when the player asks Aiko to make something
+  happen and she agrees, she appends `[DO:label|verb]` markers
+  (verb ∈ `ward, divine, purify, scout, search, rest, watch, cheer`).
+  `extractActions()` parses them into real action buttons; server verbs run
+  through `POST /act`, local verbs resolve in the browser game.
+- **Config:** server URL stored in `localStorage` (`aiko_onmyoji_server_url`);
+  change it from the ⚙ link control in the whisper panel. Health check:
+  `GET /api/onmyoji/health`.
+- **Offline fallback:** when the server is unreachable, Aiko answers from the
+  local template engine (`js/aiko.js`) and action buttons are hidden.

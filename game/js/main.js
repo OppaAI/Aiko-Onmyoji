@@ -11,6 +11,8 @@ import * as Aiko from './aiko.js';
 import * as Quests from './quests.js';
 import * as History from './history.js';
 import * as Factions from './factions.js';
+import * as Link from './aiko_link.js';
+import * as Explore from './explore.js';
 
 // ---- wire cross-module hooks (factions <-> history) ----
 History.setFactionName((fid) => Factions.factionDisplayName(S, fid));
@@ -139,6 +141,7 @@ function topbar() {
     <span class="tb">📍 ${esc(MapX.getLocation(S.player.location).name)}</span>
     <button class="btn small" data-act="save">Save</button>
     <button class="btn small" data-act="status">Status</button>
+    <button class="btn small" data-act="whisper">🦊 Whisper <span id="wh-dot" class="dot">●</span></button>
   </div>`;
 }
 
@@ -165,9 +168,11 @@ function renderTitle() {
         <p>💬 <b>Talk</b> to samurai, nobles, merchants, kappa, and ghosts — each speaks in their own style.</p>
         <p>⚔ <b>Fight</b> turn-based battles. Weaken foes, then <b>SPARE</b> or <b>FINISH</b> them — karma remembers.</p>
         <p>🦊 <b>Aiko</b> fights beside you and comments on the flow of history. Her bond shapes her banter.</p>
+        <p>🖱 <b>Explore</b> each place point-and-click style — click the buildings, people and gates to act.</p>
+        <p>🦊 <b>Whisper</b> to Aiko mind-to-mind from the top bar — no one else can hear. When the Aiko-chan link is live, the real Aiko answers, and you can ask her to make things happen.</p>
         <p>🌊 <b>Do anything</b> — serve a lord faithfully, betray him, get rich, or wander free. The realm keeps score.</p>
       </div>
-      <p class="fine">A Rance-inspired structure & humor — all content strictly non-explicit.</p>
+      <p class="fine">An original historical sandbox — all content strictly non-explicit.</p>
     </div>
   </div>`;
 }
@@ -194,13 +199,18 @@ function renderMap() {
 }
 
 // ---------------------------------------------------------------- LOCATION
+// ---------------------------------------------------------------- LOCATION (explore view)
+// Point-and-click district navigation, Dragon Knight 4 style: the location is
+// a scene with positioned hotspots (audience hall, people, market, inn,
+// shrine, gates) generated from live game data by explore.js.
 function renderLocation() {
   const loc = MapX.getLocation(S.player.location);
-  const npcs = DLG.npcsAt(S, S.player.location);
-  const fids = factionsHere();
+  const spots = Explore.hotspotsFor(S, S.player.location);
   const hb = Quests.questState(S, 'hollow_bell');
   const canFinale = S.player.location === 'honnoji' && hb.stage === 5 && !S.world.flags.game_complete;
-  const servingHere = fids.includes(S.world.service.faction);
+  const servingHere = Object.keys(Factions.FACTIONS).some((fid) =>
+    Factions.factionActive(S, fid) && Factions.factionCapital(S, fid) === S.player.location &&
+    S.world.service.faction === fid);
 
   // pending battle banner
   let battleBanner = '';
@@ -219,41 +229,27 @@ function renderLocation() {
       </div></div>`;
   }
 
-  const factionBlock = fids.length ? `<h3>👑 Powers seated here</h3><div class="btn-grid">` +
-    fids.map(fid => {
-      const dm = Factions.currentDaimyo(S, fid);
-      const serving = S.world.service.faction === fid;
-      return `<button class="btn npc-btn" data-act="audience" data-id="${fid}">
-        ${portrait(Factions.factionDef(fid).portrait, '👑', 'portrait sm')}
-        <span>👑 <b>${esc(dm.name)}</b><br><small>${esc(Factions.factionDisplayName(S, fid))} (${esc(Factions.factionJp(S, fid))})${serving ? ' — <b>your lord</b>' : ''}</small><br>
-        <small>Rep ${Factions.repOf(S, fid)} · Str ${Factions.factionState(S, fid).strength}</small></span></button>`;
-    }).join('') + `</div>` : '';
-
   return `
-  <div class="screen loc-screen" style="${bgStyle(loc.bg)}">
-    <div class="loc-card">
+  <div class="screen explore-screen" style="${bgStyle(loc.bg)}">
+    <div class="explore-head">
       <h2>${esc(loc.name)} <span class="jp">${esc(loc.jp)}</span></h2>
       <p class="flavor">${esc(loc.desc)}</p>
       <p class="flavor">🦊 <i>“${esc(Aiko.aikoLine(S, { situation: 'idle' }))}”</i></p>
-      ${battleBanner}
-      ${factionBlock}
-      ${npcs.length ? `<h3>People & spirits here</h3><div class="btn-grid">` +
-        npcs.map(n => {
-          const arch = DLG.ARCHETYPES[n.archetype];
-          return `<button class="btn npc-btn" data-act="talk" data-id="${n.id}">${portrait(arch.portrait, arch.fallback, 'portrait sm')}<span>💬 ${esc(n.name)}<br><small>${esc(arch.label)}</small></span></button>`;
-        }).join('') + `</div>` : `<p class="flavor">No one to talk to here — only the wind.</p>`}
-      ${loc.services.length ? `<h3>Services</h3><div class="btn-row">` +
-        loc.services.map(sv =>
-          sv === 'inn' ? `<button class="btn" data-act="inn">🍶 Inn — rest till morning (20 gold)</button>` :
-          sv === 'shop' ? `<button class="btn" data-act="shop">🛒 Browse wares</button>` :
-          `<button class="btn" data-act="shrine">⛩ Pray at the shrine (2h)</button>`
-        ).join('') +
-        `<button class="btn ghost" data-act="wait">⏳ Wait a day</button></div>` : ''}
+    </div>
+    ${battleBanner}
+    <div class="explore-scene" aria-label="Explore ${esc(loc.name)}">
+      ${spots.map(p => `<button class="hotspot" style="left:${p.x}%;top:${p.y}%"
+          data-act="${p.act}" data-id="${esc(p.id || '')}" title="${esc(p.label)}">
+        <span class="hs-icon">${p.icon}</span><span class="hs-label">${esc(p.label)}</span>${p.sub ? `<span class="hs-sub">${esc(p.sub)}</span>` : ''}
+      </button>`).join('')}
+    </div>
+    <div class="loc-card">
       ${servingHere ? `<div class="btn-row"><button class="btn big" data-act="missions">📜 Missions for ${esc(Factions.factionDisplayName(S, S.world.service.faction))}</button></div>` : ''}
       ${canFinale ? `<div class="finale"><button class="btn big danger" data-act="finale">🔔 Enter Honnō-ji — face the Hollow Bell</button></div>` : ''}
       ${tidingsHtml(4)}
       <div class="btn-row">
         <button class="btn big" data-act="map">🗺 Travel</button>
+        <button class="btn ghost" data-act="wait">⏳ Wait a day</button>
         <button class="btn ghost" data-act="factions">👑 The Great Clans</button>
         <button class="btn ghost" data-act="quests">📜 Quests</button>
       </div>
@@ -261,7 +257,6 @@ function renderLocation() {
     </div>
   </div>`;
 }
-
 // ---------------------------------------------------------------- DIALOGUE
 function startDialogue(npcId) {
   const npc = DLG.resolveNpc(S, npcId);
@@ -621,6 +616,111 @@ function renderEnding() {
 // ---------------------------------------------------------------- events
 function msg(t) { pendingMsg = t; }
 
+// ---------------------------------------------------------------- WHISPER — private spirit bond with Aiko
+// A floating panel (outside #app so it survives re-renders). Only the player
+// hears this conversation — NPCs never see it. When the Aiko-chan server link
+// is live, the real Aiko (LLM + inner voice) answers; otherwise she answers
+// from local scripted lines.
+let whOpen = false, whOnline = null, whBusy = false;
+let whLog = [], whActions = [];
+
+function initWhisper() {
+  if (document.getElementById('whisper')) return;
+  const el = document.createElement('div');
+  el.id = 'whisper';
+  el.className = 'whisper hidden';
+  el.innerHTML = `
+    <div class="wh-head"><span>🦊 <b>Spirit Bond</b></span>
+      <small>mind-to-mind · no one else can hear</small>
+      <span id="wh-stat" class="wh-stat">…</span>
+      <button class="btn small ghost" data-act="wh-close">✕</button></div>
+    <div id="wh-log" class="wh-log"></div>
+    <div id="wh-actions" class="wh-actions"></div>
+    <div class="wh-input">
+      <input id="wh-text" maxlength="300" placeholder="Whisper to Aiko…" autocomplete="off">
+      <button class="btn" data-act="wh-send">➤</button>
+    </div>
+    <div class="wh-foot"><button class="btn small ghost" data-act="wh-server">⚙ link: <span id="wh-url"></span></button></div>`;
+  document.body.appendChild(el);
+  el.querySelector('#wh-text').addEventListener('keydown', (ev) => {
+    if (ev.key === 'Enter') { ev.preventDefault(); whisperSend(); }
+  });
+}
+
+function whisperRender() {
+  const log = document.getElementById('wh-log');
+  if (!log) return;
+  log.innerHTML = whLog.map(m =>
+    `<p class="wh-${m.who}"><b>${m.who === 'you' ? 'You' : '🦊 Aiko'}:</b> ${esc(m.text)}</p>`).join('');
+  log.scrollTop = log.scrollHeight;
+  const stat = document.getElementById('wh-stat');
+  if (stat) stat.textContent = whOnline === null ? '…' : whOnline ? '🟢 live' : '⚪ memory';
+  const dot = document.getElementById('wh-dot');
+  if (dot) dot.className = 'dot' + (whOnline === true ? ' on' : whOnline === false ? ' off' : '');
+  const urlEl = document.getElementById('wh-url');
+  if (urlEl) urlEl.textContent = Link.serverUrl().replace(/^https?:\/\//, '');
+  const acts = document.getElementById('wh-actions');
+  if (acts) acts.innerHTML = whActions.map((a, i) =>
+    `<button class="btn small" data-act="wh-do" data-id="${i}">✨ ${esc(a.label)}</button>`).join('');
+}
+
+function offlineWhisper() {
+  return Aiko.aikoLine(S, { situation: 'idle' }) +
+    ' (My other self is out of reach — the Aiko-chan link is asleep. I answer from memory.)';
+}
+
+async function whisperSend() {
+  const input = document.getElementById('wh-text');
+  if (!input) return;
+  const text = (input.value || '').trim();
+  if (!text || whBusy || !S) return;
+  input.value = '';
+  whLog.push({ who: 'you', text });
+  whBusy = true; whisperRender();
+  try {
+    if (whOnline === null) whOnline = await Link.linkOnline();
+    if (whOnline) {
+      const reply = await Link.talkToAiko(text, {
+        name: S.player.name,
+        loc: MapX.getLocation(S.player.location).name,
+        date: St.dateLabel(S), bond: S.aiko.bond, karma: S.player.karma,
+      });
+      const { clean, actions } = Link.extractActions(reply);
+      whLog.push({ who: 'aiko', text: clean || '…' });
+      whActions = actions;
+    } else {
+      whLog.push({ who: 'aiko', text: offlineWhisper() });
+      whActions = [];
+    }
+  } catch (e) {
+    whOnline = false;
+    whLog.push({ who: 'aiko', text: 'The bond flickers… I cannot reach my other self right now. (link error — I answer from memory: ' + offlineWhisper() + ')' });
+    whActions = [];
+  }
+  whBusy = false; whisperRender();
+  St.saveGame(S);
+}
+
+function whisperToggle() {
+  const el = document.getElementById('whisper');
+  if (!el || !S) return;
+  whOpen = !whOpen;
+  el.classList.toggle('hidden', !whOpen);
+  if (whOpen && !whLog.length) {
+    whLog.push({ who: 'aiko', text: '“This is our private bond, master. Speak, and no one else will hear.”' });
+  }
+  if (whOpen && whOnline === null) {
+    Link.linkOnline().then((ok) => {
+      whOnline = ok;
+      if (!ok) whLog.push({ who: 'aiko', text: '“Hmm — I cannot feel my other self. The link must be asleep; I will answer from memory.”' });
+      whisperRender();
+    });
+  }
+  whisperRender();
+  const input = document.getElementById('wh-text');
+  if (whOpen && input) input.focus();
+}
+
 document.addEventListener('click', (ev) => {
   const btn = ev.target.closest('[data-act]');
   if (!btn || btn.disabled) return;
@@ -635,7 +735,12 @@ document.addEventListener('click', (ev) => {
     screen = 'location'; render(); return;
   }
   if (act === 'continue') { S = St.loadGame(); if (S) { Factions.initFactions(S); screen = 'location'; render(); } return; }
-  if (act === 'title') { screen = 'title'; render(); return; }
+  if (act === 'title') {
+    whOpen = false;
+    const wp = document.getElementById('whisper');
+    if (wp) wp.classList.add('hidden');
+    screen = 'title'; render(); return;
+  }
   if (act === 'howto') { document.getElementById('howto').classList.toggle('hidden'); return; }
   if (!S) return;
 
@@ -787,6 +892,63 @@ document.addEventListener('click', (ev) => {
     case 'abandon':
       if (confirm('Abandon this journey? Your save will be deleted.')) { St.clearSave(); S = null; screen = 'title'; }
       break;
+    // ---- whisper: private spirit bond ----
+    case 'whisper': whisperToggle(); break;
+    case 'wh-close': whOpen = false; document.getElementById('whisper').classList.add('hidden'); break;
+    case 'wh-send': whisperSend(); return;
+    case 'wh-server': {
+      const cur = Link.serverUrl();
+      const next = prompt('Aiko-chan server URL (empty = reset to default):', cur);
+      if (next !== null) { Link.setServerUrl(next.trim()); whOnline = null; whisperRender(); }
+      break;
+    }
+    case 'wh-do': {
+      const a = whActions[+id];
+      const def = a && Link.ACTION_DEFS[a.verb];
+      if (!a || !def || whBusy) break;
+      whBusy = true; whisperRender();
+      (async () => {
+        try {
+          if (def.kind === 'server') {
+            const r = await Link.performServerAction(a.verb, a.label);
+            whLog.push({ who: 'aiko', text: `✨ ${a.label} — ${r.text}` });
+          } else if (a.verb === 'cheer') {
+            const r = St.bondChange(S, 2, 'cheered up by Aiko');
+            whLog.push({ who: 'aiko', text: `“There — smile, master. The realm is less dreary already.” (Bond +2 → ${r.now})` });
+          }
+          St.saveGame(S);
+        } catch (e) {
+          whLog.push({ who: 'aiko', text: 'It did not work… the spirits are being difficult today.' });
+        }
+        whActions = []; whBusy = false; whisperRender();
+      })();
+      break;
+    }
+    // ---- explore flavor hotspots ----
+    case 'x-rumor': {
+      St.advanceHours(S, 1);
+      pushNews(History.processDate(S));
+      msg('👂 ' + Explore.RUMORS[Math.floor(Math.random() * Explore.RUMORS.length)]);
+      St.saveGame(S); break;
+    }
+    case 'x-drills': {
+      St.advanceHours(S, 2);
+      const r = St.addExp(S, 3);
+      pushNews(History.processDate(S));
+      msg(`⚔ You watch the ashigaru drill until your own shoulders ache. (+3 EXP${r.leveled ? ` — LEVEL UP! Now level ${S.player.level}` : ''}) 🦊 “Sloppy footwork. Even I could do better, and I have no feet.”`);
+      St.saveGame(S); break;
+    }
+    case 'x-restspot': {
+      St.advanceHours(S, 2);
+      St.healPlayer(S, 15);
+      pushNews(History.processDate(S));
+      msg('🌳 You rest in the shade, listening to the wind move through the land. (+15 HP)');
+      St.saveGame(S); break;
+    }
+    case 'x-aiko': {
+      msg('🦊 “' + Aiko.aikoLine(S, { situation: 'idle' }) + '”');
+      break;
+    }
     // ---- combat ----
     case 'c-attack': combatAction({ type: 'attack' }); return;
     case 'c-spell': combatPhase = 'spell'; break;
@@ -872,4 +1034,5 @@ function render() {
   app.innerHTML = topbar() + RENDERERS[screen]();
 }
 
+initWhisper();
 render();
