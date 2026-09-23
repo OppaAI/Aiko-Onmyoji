@@ -1,0 +1,140 @@
+/* Aiko Onmyoji: Sengoku Spirits — ink, indigo, and foxfire. Offline-safe: system fonts only. */
+:root {
+  --ink: #1a1423;
+  --paper: #f3ead8;
+  --paper-dim: #e4d6b8;
+  --indigo: #2b2d5c;
+  --crimson: #a03030;
+  --gold: #d8a83e;
+  --jade: #4a7c59;
+  --shadow: rgba(0, 0, 0, .55);
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: #0d0a14;
+  color: var(--paper);
+  font-family: Georgia, 'Times New Roman', 'Hiragino Mincho ProN', serif;
+  min-height: 100vh;
+}
+#app { max-width: 860px; margin: 0 auto; padding: 8px; }
+
+/* ---------- top bar ---------- */
+#topbar {
+  display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+  background: var(--ink); border: 1px solid var(--gold); border-radius: 8px;
+  padding: 6px 10px; margin-bottom: 10px; font-size: .85rem;
+  position: sticky; top: 4px; z-index: 10;
+}
+#topbar .tb { margin-right: 8px; white-space: nowrap; }
+#topbar .btn { margin-left: auto; }
+
+/* ---------- screens ---------- */
+.screen {
+  background: var(--ink); border: 1px solid #4a4468; border-radius: 10px;
+  padding: 18px; box-shadow: 0 4px 24px var(--shadow);
+  background-size: cover; background-position: center;
+}
+.screen h2 { margin-top: 0; color: var(--gold); }
+.screen h3 { color: var(--paper-dim); border-bottom: 1px solid #4a4468; padding-bottom: 4px; }
+.jp { color: var(--gold); font-size: .85em; }
+.flavor { color: #cfc3a8; font-style: italic; }
+.sysmsg { background: #2b2d5c; border-left: 3px solid var(--gold); padding: 8px; border-radius: 4px; }
+
+/* ---------- title ---------- */
+.title-screen { min-height: 80vh; display: flex; align-items: center; justify-content: center; text-align: center; }
+.title-card {
+  background: rgba(26, 20, 35, .92); border: 2px solid var(--gold);
+  border-radius: 12px; padding: 32px 28px; max-width: 560px;
+}
+.jp-title { font-size: 2rem; color: var(--crimson); letter-spacing: .4em; }
+.title-card h1 { color: var(--gold); margin: .3em 0; font-size: 2.2rem; }
+.tagline { color: #cfc3a8; }
+.title-form { display: flex; flex-direction: column; gap: 10px; margin: 18px 0; }
+.title-form input {
+  padding: 10px; font-size: 1rem; border-radius: 6px; border: 1px solid var(--gold);
+  background: #0d0a14; color: var(--paper); text-align: center; font-family: inherit;
+}
+.howto { text-align: left; background: #241d33; border-radius: 8px; padding: 10px 14px; margin: 12px 0; }
+.hidden { display: none; }
+.fine { font-size: .75rem; color: #8d84a8; }
+
+/* ---------- buttons ---------- */
+.btn {
+  font-family: inherit; cursor: pointer;
+  background: var(--indigo); color: var(--paper);
+  border: 1px solid var(--gold); border-radius: 8px;
+  padding: 10px 14px; font-size: .95rem;
+}
+.btn:hover:not(:disabled) { background: #3a3d75; }
+.btn:disabled { opacity: .4; cursor: not-allowed; }
+.btn.big { font-size: 1.1rem; padding: 12px 20px; }
+.btn.small { font-size: .8rem; padding: 5px 10px; }
+.btn.ghost { background: transparent; border-color: #6a6488; }
+.btn.danger { background: var(--crimson); border-color: #d86a6a; }
+.btn-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; margin: 10px 0; }
+.btn-row { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+.btn.choice { border-color: var(--crimson); text-align: left; }
+
+/* ---------- location ---------- */
+.loc-screen { min-height: 70vh; }
+.loc-card { background: rgba(26, 20, 35, .88); border-radius: 10px; padding: 18px; }
+.npc-btn { display: flex; align-items: center; gap: 10px; text-align: left; }
+.finale { margin: 16px 0; text-align: center; }
+
+/* ---------- portraits ---------- */
+.portrait {
+  display: inline-flex; width: 72px; height: 72px; border-radius: 10px;
+  border: 2px solid var(--gold); overflow: hidden; background: #2b2d5c;
+  align-items: center; justify-content: center; flex: none;
+}
+.portrait img { width: 100%; height: 100%; object-fit: cover; }
+.portrait.sm { width: 48px; height: 48px; }
+.portrait.foe-port { width: 120px; height: 120px; }
+.pfallback { font-size: 2rem; align-items: center; justify-content: center; width: 100%; height: 100%; }
+
+/* ---------- dialogue ---------- */
+.dlg-screen { display: flex; justify-content: center; }
+.dlg-box { max-width: 640px; width: 100%; background: rgba(26, 20, 35, .95); border: 1px solid var(--gold); border-radius: 10px; padding: 18px; }
+.dlg-head { display: flex; gap: 12px; align-items: center; margin-bottom: 12px; }
+.dlg-text { font-size: 1.08rem; line-height: 1.6; min-height: 90px; background: #241d33; border-radius: 8px; padding: 14px; }
+.notes p { background: #1e3a2a; border-left: 3px solid var(--jade); padding: 6px 10px; border-radius: 4px; font-size: .9rem; }
+
+/* ---------- combat ---------- */
+.combat-screen { min-height: 70vh; }
+.combat-card { background: rgba(26, 20, 35, .9); border-radius: 10px; padding: 16px; }
+.foe { display: flex; gap: 14px; align-items: center; margin-bottom: 10px; }
+.foe-info { flex: 1; }
+.ally-row { display: flex; gap: 12px; margin: 8px 0; }
+.ally { flex: 1; }
+.bar { position: relative; background: #0d0a14; border: 1px solid #6a6488; border-radius: 6px; height: 22px; margin: 4px 0; overflow: hidden; }
+.bar .fill { height: 100%; transition: width .3s; }
+.bar span { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: .75rem; }
+.fill.hp { background: #3fa34d; } .fill.ahp { background: #7fb069; }
+.fill.rei { background: #5b6ee1; } .fill.ehp { background: var(--crimson); }
+.round { color: var(--gold); font-weight: bold; }
+.tele { color: #9fd8ff; }
+.combat-log { background: #14101d; border: 1px solid #4a4468; border-radius: 8px; padding: 8px 12px; min-height: 120px; max-height: 200px; overflow-y: auto; margin: 10px 0; }
+.combat-log p { margin: 4px 0; font-size: .92rem; }
+.spare-box { text-align: center; background: #241d33; border: 1px dashed var(--gold); border-radius: 8px; padding: 14px; }
+
+/* ---------- status / shop ---------- */
+.stat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px; background: #241d33; border-radius: 8px; padding: 12px; margin: 8px 0; }
+.inv-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; background: #241d33; border-radius: 6px; padding: 8px 12px; margin: 6px 0; }
+
+@media (max-width: 600px) {
+  .foe { flex-direction: column; text-align: center; }
+  .ally-row { flex-direction: column; }
+  #topbar { font-size: .75rem; }
+}
+
+/* ---------- historical sandbox additions ---------- */
+.tidings { background: #1d2433; border: 1px solid #4a5a78; border-radius: 8px; padding: 10px 14px; margin: 12px 0; }
+.tidings h3 { margin: 4px 0 8px; color: var(--gold); }
+.tidings p { margin: 6px 0; font-size: .9rem; }
+.tidings small { color: #8a94b8; }
+.tidings.flash { border-color: var(--gold); background: #26221a; }
+.battle-banner { background: #3a1a1a; border: 2px solid var(--crimson); border-radius: 10px; padding: 14px; margin: 12px 0; }
+.battle-banner h3 { margin-top: 0; color: #ffb3b3; }
+.mission { background: #241d33; border: 1px solid var(--gold); border-radius: 8px; padding: 12px; margin: 10px 0; }
+.mission.active { border-width: 2px; }
+.sysmsg { background: #1e3a2a; border-left: 3px solid var(--jade); padding: 8px 12px; border-radius: 4px; }
