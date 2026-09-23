@@ -85,6 +85,10 @@ import com.aiko.onmyoji.data.model.JourneyState
 import com.aiko.onmyoji.data.model.StartRequest
 import com.aiko.onmyoji.data.model.TalkRequest
 import com.aiko.onmyoji.data.remote.OnmyojiApi
+import com.aiko.onmyoji.engine.BattleScreen
+import com.aiko.onmyoji.engine.GameMaps
+import com.aiko.onmyoji.engine.SpriteLibrary
+import com.aiko.onmyoji.engine.WorldViewport
 import com.aiko.onmyoji.ui.theme.AikoOnmyojiTheme
 import com.aiko.onmyoji.ui.theme.OnmyojiIndigo
 import com.aiko.onmyoji.ui.theme.PastelBlue
@@ -102,7 +106,7 @@ import retrofit2.Retrofit
 import retrofit2.converter.kotlinx.serialization.asConverterFactory
 import java.util.concurrent.TimeUnit
 
-enum class Screen { Title, Journey }
+enum class Screen { Title, Journey, Explore }
 
 // Mirror of server RITUAL_MP (display only; server enforces).
 private val RITUAL_MP = mapOf("ward" to 1, "bind" to 2, "purify" to 2, "banish" to 3)
@@ -377,6 +381,38 @@ fun OnmyojiApp(api: OnmyojiApi, baseUrl: String, onBaseUrlChange: (String) -> Un
                             }
                         },
                         onBack = { screen = Screen.Title },
+                        onExplore = { screen = Screen.Explore },
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+            }
+            Screen.Explore -> {
+                Column(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                    ExploreScreen(
+                        journey = journey,
+                        onTalk = { target, message ->
+                            scope.launch {
+                                loading = true
+                                try {
+                                    if (localMode) {
+                                        journey = demoTalk(journey ?: demoStart(), target, message)
+                                    } else {
+                                        val res = withJourney {
+                                            withContext(Dispatchers.IO) { api.talk(TalkRequest(target = target, message = message)) }
+                                        }
+                                        journey = res.journey
+                                        saveJourneyState(res.journey)
+                                    }
+                                    error = null
+                                } catch (e: Exception) {
+                                    localMode = true
+                                    journey = demoTalk(journey ?: demoStart(), target, message)
+                                    error = "The narrator is offline; Aiko answers from the known scene."
+                                }
+                                loading = false
+                            }
+                        },
+                        onBack = { screen = Screen.Journey },
                         modifier = Modifier.weight(1f)
                     )
                 }
@@ -455,6 +491,7 @@ private fun JourneyScreen(
     onAct: (ActRequest) -> Unit,
     onTalk: (String, String) -> Unit,
     onBack: () -> Unit,
+    onExplore: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var showTravel by remember { mutableStateOf(false) }
@@ -602,6 +639,18 @@ private fun JourneyScreen(
                     icon = Icons.Default.AttachMoney,
                     onClick = { onAct(ActRequest(action = "work")) },
                     enabled = !loading,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                QuickActionButton(
+                    text = "Explore",
+                    icon = Icons.Default.Place,
+                    onClick = onExplore,
+                    enabled = !loading && journey != null,
                     modifier = Modifier.weight(1f)
                 )
             }
@@ -800,9 +849,21 @@ private fun WorldMapCard(journey: JourneyState, modifier: Modifier = Modifier) {
                 drawCircle(Color(0xFFDB6B83), 13f, center = androidx.compose.ui.geometry.Offset(size.width * active.first, size.height * active.second))
             }
             Text("SENGOKU ROAD · " + journey.location, color = Color(0xFFFFE9B0), style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, modifier = Modifier.padding(12.dp))
-            Text("June 1582  ·  Honno-ji draws near", color = Color.White.copy(alpha = .78f), style = MaterialTheme.typography.bodySmall, modifier = Modifier.align(Alignment.BottomStart).padding(12.dp))
+            Text(seasonLine(journey.date, journey.location), color = Color.White.copy(alpha = .78f), style = MaterialTheme.typography.bodySmall, modifier = Modifier.align(Alignment.BottomStart).padding(12.dp))
         }
     }
+}
+
+private fun seasonLine(date: String, location: String): String {
+    // Date-driven, never event-driven: no future incidents are named here.
+    val month = date.split("-").getOrNull(1)?.toIntOrNull() ?: 1
+    val season = when (month) {
+        3, 4, 5 -> "spring rain"
+        6, 7, 8 -> "summer heat"
+        9, 10, 11 -> "autumn wind"
+        else -> "winter quiet"
+    }
+    return "$date · $location · $season on the road"
 }
 
 private fun demoStart(): JourneyState = JourneyState(date = "1582-06-01", location = "Kyoto", inventory = listOf("ofuda x3", "rice ball", "silver fan"), bond = 2, journey_summary = "You arrived in Kyoto with Aiko. A fox-fire flickers near the temple district.", entities = listOf(Entity("aiko", "spirit", "Aiko", "shikigami", "playful but watchful", listOf("bound to your seal"), 1, "bonded", "1582-06-01", "Kyoto"), Entity("merchant_jiro", "human", "Jiro", "lantern merchant", "wary", listOf("saw soldiers moving east"), 0, "passing", "1582-06-01", "Kyoto")), flags = listOf("kyoto_arrival"), dialogue = listOf(DialogueLine("aiko", "you", "The city is holding its breath. I smell ash beyond the temple wall.")), hp = 10, max_hp = 10, mp = 8, max_mp = 10, skills = mapOf("divination" to 1, "wards" to 1), morality = 0)
@@ -1068,3 +1129,6 @@ private fun StateCard(title: String, body: @Composable () -> Unit) {    Card(
         }
     }
 }
+
+
+

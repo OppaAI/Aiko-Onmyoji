@@ -14,6 +14,9 @@ data class Entity(
     val tier: String = "passing", // anchor | bonded | passing
     val last_seen: String = "",
     val location: String = "",
+    val x: Float = 0f,
+    val y: Float = 0f,
+    val direction: String = "S",
 )
 
 @Serializable
