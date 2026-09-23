@@ -874,28 +874,37 @@ document.addEventListener('click', (ev) => {
       if (!hscene) break;
       const sc = Scenes.SCENES[hscene.sceneId];
       const stage = sc.stages[hscene.stageIdx];
-      if (hscene.touches >= stage.need) break;
+      if (!stage || hscene.touches >= stage.need) break;
       const sp = stage.spots.find(x => x.id === id);
       if (!sp) break;
+      const seenN = hscene.seen[sp.id] || 0;
+      if (seenN >= sp.texts.length) break; // each spot yields each of its texts once
       const npc = DLG.resolveNpc(S, hscene.npcId);
-      const n = (hscene.seen[sp.id] = (hscene.seen[sp.id] || 0) + 1);
-      hscene.log.push(sp.texts[(n - 1) % sp.texts.length](npc.name));
+      hscene.seen[sp.id] = seenN + 1;
+      hscene.log.push(sp.texts[seenN](npc.name));
       hscene.touches += 1;
       St.saveGame(S); render(); return;
     }
     case 'scene-next': {
       if (!hscene) break;
       const sc = Scenes.SCENES[hscene.sceneId];
-      hscene.stageIdx += 1; hscene.touches = 0;
+      const cur = sc.stages[hscene.stageIdx];
+      if (!cur || hscene.touches < cur.need) break; // stage not complete
+      if (hscene.stageIdx >= sc.stages.length - 1) break; // no further stage
+      hscene.stageIdx += 1; hscene.touches = 0; hscene.seen = {};
       const npc = DLG.resolveNpc(S, hscene.npcId);
       hscene.log.push(sc.stages[hscene.stageIdx].intro(npc.name));
       St.saveGame(S); render(); return;
     }
     case 'scene-end': {
       if (!hscene) break;
+      const sc0 = Scenes.SCENES[hscene.sceneId];
+      const last0 = sc0.stages[hscene.stageIdx];
+      if (!last0 || hscene.stageIdx !== sc0.stages.length - 1 || hscene.touches < last0.need) break;
       const npcId = hscene.npcId;
+      const lkey = DLG.loverKeyFor(npcId);
       hscene = null; screen = 'location';
-      applyEffects([{ heal: 40 }, { exp: 30 }, { flag: ['lovday_' + npcId, 'TODAY'] }, { bond: 2 }]);
+      applyEffects([{ heal: 40 }, { exp: 30 }, { flag: ['lovday_' + lkey, 'TODAY'] }, { bond: 2 }]);
       St.addNews(S, `🌙 A night of passion with ${esc(DLG.resolveNpc(S, npcId).name)} — the realm need never know.`);
       St.saveGame(S); render(); return;
     }
