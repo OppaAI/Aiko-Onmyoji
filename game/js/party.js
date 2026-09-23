@@ -224,8 +224,9 @@ export function bindShikigami(S, world, target) {
   return { ok: true, msg };
 }
 
-function findShikigami(S, nameFrag) {
+export function findShikigami(S, nameFrag) {
   const q = String(nameFrag || '').toLowerCase();
+  if (!q) return null;
   return S.world.shikigami.find(g =>
     g.name.toLowerCase().includes(q) || g.id.toLowerCase() === q || g.id.toLowerCase() === 'shik_' + q);
 }
@@ -268,16 +269,19 @@ export function shikigamiList(S) {
     .join('\n');
 }
 
-export function setShikigamiOrder(S, order) {
+export function setShikigamiOrder(S, order, actorRef = null) {
   ensureState(S);
   if (!['attack', 'follow', 'hide'].includes(order)) return { ok: false, msg: 'Unknown order.' };
+  const actor = actorRef ? findShikigami(S, actorRef) : null;
+  if (actorRef && !actor) return { ok: false, msg: 'No such shikigami is bound to you.' };
   S.world.shikigamiOrder = order;
+  S.world.shikigamiOrderActor = order === 'attack' && actor ? actor.id : null;
   for (const g of S.world.shikigami) {
     if (g.id === 'aiko' || g.permanent) { g.summoned = true; continue; }
     g.summoned = order !== 'hide';
   }
   const msgs = {
-    attack: 'Your shikigami bare their fangs, ready to strike.',
+    attack: actor ? `${actor.name} bares their fangs, ready to strike.` : 'Your shikigami bare their fangs, ready to strike.',
     follow: 'Your shikigami settle into step behind you.',
     hide: 'Your shikigami melt into the shadows. (Aiko stays.)',
   };

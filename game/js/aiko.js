@@ -2,9 +2,14 @@
 // State-aware banter, bond system, karma reactions, and the AikoServer
 // adapter interface (swap in a live LLM backend without touching game code).
 
-import { clamp, karmaTier, pick, rand, timeOfDay, nengo, recentNews } from './state.js';
+import {
+  clamp, karmaTier, pick, rand, timeOfDay, nengo, recentNews,
+  addKarma, addGold, addItem, removeItem, bondChange, setFlag, addNews,
+} from './state.js';
+import { serverUrl } from './aiko_link.js';
+import { kissAllowed, sexAllowed } from './actions.js';
+import { changeRep, factionDef, factionDisplayName, currentDaimyo, rankName } from './factions.js';
 import { locationName } from './map.js';
-import { factionDisplayName, currentDaimyo, rankName } from './factions.js';
 
 // ---------------------------------------------------------------------------
 // Template banter engine (default backend)
@@ -294,6 +299,237 @@ function summarizeState(s) {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Freeform-action server seam (POST /api/onmyoji/do)
+// ---------------------------------------------------------------------------
+// After any act() failure the client stays offline for a while so every
+// typed command doesn't pay a timeout while the server is down.
+const SERVER_COOLDOWN_MS = 60000;
+let serverCooldownUntil = 0;
+
+// Nearby entities for the extended compact state. `adult` comes from the
+// dialogue.js NPC records (`adult: true` on the romanceable NPCs) — the
+// same source of truth the game's adult gating uses.
+export function collectPresent(world) {
+  const present = [];
+  if (!world) return present;
+  for (const n of world.npcs || []) {
+    const rec = n.rec || {};
+    present.push({
+      id: n.id,
+      kind: /^daimyo_/.test(n.id) ? 'historical' : 'npc',
+      name: rec.name || n.id,
+      adult: rec.adult === true,
+      hostile: rec.hostile === true,
+      disposition: rec.hostile ? 'hostile' : (rec.disposition || 'neutral'),
+    });
+  }
+  for (const h of world.hostiles || []) {
+    present.push({
+      id: h.id,
+      kind: h.kind === 'demon' ? 'demon' : h.kind === 'animal' ? 'animal' : 'npc',
+      name: h.name || h.id,
+      adult: false,
+      hostile: h.hostile !== false,
+      disposition: 'hostile',
+    });
+  }
+  for (const a of world.animals || []) {
+    present.push({
+      id: a.id, kind: 'animal', name: a.name || a.id,
+      adult: false, hostile: !!a.hostile,
+      disposition: a.hostile ? 'hostile' : 'neutral',
+    });
+  }
+  for (const g of world.shikigamiVis || []) {
+    present.push({
+      id: g.gid || g.id, kind: 'spirit', name: g.name || g.id,
+      adult: false, hostile: false, disposition: 'loyal',
+    });
+  }
+  return present;
+}
+
+// Bound shikigami (Aiko included) for the extended compact state.
+export function collectParty(s) {
+  return ((s && s.world && s.world.shikigami) || [])
+    .map((g) => ({ id: g.id, name: g.name, kind: g.kind || 'spirit' }));
+}
+
+// Extended compact state for /api/onmyoji/do: the base summarizeState plus
+// nearby entities, the bound party, and the player's hard capability limits
+// (the server refuses flight, water-walking, wall-passing, teleporting).
+export function summarizeStateExtended(gameState, extra = {}) {
+  const base = summarizeState(gameState);
+  return {
+    ...base,
+    player: { ...base.player, canFly: false, canCrossWater: false },
+    present: Array.isArray(extra.present) ? extra.present : [],
+    party: Array.isArray(extra.party) ? extra.party : [],
+  };
+}
+
+const SERVER_FLAG_PREFIX = 'server_';
+
+function serverFlagAllowed(flag) {
+  if (typeof flag !== 'string') return false;
+  const key = flag.trim().toLowerCase();
+  if (!key.startsWith(SERVER_FLAG_PREFIX)) return false;
+  if (/(^|_)(lover|aff|coerced)(_|$)/.test(key)) return false;
+  if (/__proto__|(^|_)(prototype|constructor)(_|$)/.test(key)) return false;
+  return /^server_[a-z0-9_]+$/.test(key);
+}
+
+// Deterministic application of server-computed effect descriptors.
+// Returns human-readable notes (display is the caller's choice).
+export function applyServerEffects(s, effects) {
+  const notes = [];
+  for (const ef of effects || []) {
+    if (!ef || typeof ef !== 'object') continue;
+    switch (ef.type) {
+      case 'karma': {
+        const r = addKarma(s, Number(ef.delta) || 0);
+        notes.push(`karma ${r.delta > 0 ? '+' : ''}${r.delta} → ${r.tier}`);
+        break;
+      }
+      case 'faction': {
+        // Unknown faction ids are ignored (changeRep would throw on them).
+        if (ef.faction && factionDef(ef.faction)) {
+          changeRep(s, ef.faction, Number(ef.delta) || 0);
+          notes.push(`faction ${ef.faction} ${ef.delta > 0 ? '+' : ''}${ef.delta}`);
+        }
+        break;
+      }
+      case 'mp': { // server "mp" is the game's rei
+        s.player.rei = clamp(s.player.rei + (Number(ef.delta) || 0), 0, s.player.maxRei);
+        notes.push(`rei ${ef.delta > 0 ? '+' : ''}${ef.delta}`);
+        break;
+      }
+      case 'hp': {
+        s.player.hp = clamp(s.player.hp + (Number(ef.delta) || 0), 1, s.player.maxHp);
+        notes.push(`hp ${ef.delta > 0 ? '+' : ''}${ef.delta}`);
+        break;
+      }
+      case 'bond': {
+        const r = bondChange(s, Number(ef.delta) || 0, 'server');
+        notes.push(`bond ${r.delta > 0 ? '+' : ''}${r.delta} → ${r.now}`);
+        break;
+      }
+      case 'gold': {
+        const g = addGold(s, Number(ef.delta) || 0);
+        notes.push(`gold ${ef.delta > 0 ? '+' : ''}${ef.delta} → ${g}`);
+        break;
+      }
+      case 'item': {
+        const id = String(ef.item || '').toLowerCase().trim().replace(/[^a-z0-9]+/g, '_');
+        if (!id) break;
+        if (ef.op === 'take') {
+          const ok = removeItem(s, id, 1);
+          notes.push(ok ? `lost ${id}` : `no ${id} to take`);
+        } else {
+          addItem(s, id, 1);
+          notes.push(`got ${id}`);
+        }
+        break;
+      }
+      case 'consequence': {
+        if (ef.note) { addNews(s, String(ef.note)); notes.push('noted: ' + String(ef.note).slice(0, 80)); }
+        break;
+      }
+      case 'flag': {
+        if (serverFlagAllowed(ef.flag)) {
+          const key = ef.flag.trim().toLowerCase();
+          setFlag(s, key, ef.value);
+          notes.push(`flag ${key}`);
+        }
+        break;
+      }
+      default: break; // unknown descriptors are ignored, never applied
+    }
+  }
+  return notes;
+}
+
+const FREEFORM_DIRS = {
+  north: 'up', n: 'up', up: 'up',
+  south: 'down', s: 'down', down: 'down',
+  west: 'left', w: 'left', left: 'left',
+  east: 'right', e: 'right', right: 'right',
+};
+function freeformDir(d) {
+  const k = String(d || '').toLowerCase().trim();
+  return FREEFORM_DIRS[k] || null;
+}
+
+// Map a server intent {verb, target, args, aiko_command, adult, forced} to a
+// local intent shaped exactly like chat.js parseCommand() output, so it flows
+// through the game's existing handlers in main.js execIntent().
+// Returns null for verbs the server resolves purely via narration+effects.
+export function mapFreeformIntent(intent) {
+  if (!intent || typeof intent.verb !== 'string') return null;
+  const verb = intent.verb.toLowerCase();
+  const args = intent.args || {};
+  const target = intent.target || '';
+  switch (verb) {
+    case 'travel': {
+      const d = freeformDir(args.dir);
+      return d ? { type: 'travel', dir: d }
+        : { type: 'unknown', hint: 'Travel where? Try "travel north".' };
+    }
+    case 'move': {
+      const d = freeformDir(args.dir);
+      if (!d) return { type: 'unknown', hint: 'Move where?' };
+      const steps = Math.max(1, Math.min(20, parseInt(args.steps, 10) || 1));
+      return { type: 'move', dir: d, steps };
+    }
+    case 'rest': return { type: 'action', action: 'rest' };
+    case 'strike':
+      // aiko_command: Aiko (or a named shikigami) strikes; otherwise the player.
+      return intent.aiko_command
+        ? { type: 'shikigamiAttack', target, who: args.who || 'aiko' }
+        : { type: 'action', action: 'fight', target };
+    case 'bind': return { type: 'bind', target };
+    case 'flee': return { type: 'flee' };
+    case 'command': {
+      const order = String(args.order || args.sub || '').toLowerCase();
+      if (/attack|strike|fight|kill/.test(order)) {
+        return { type: 'shikigamiAttack', target: target || args.target || '', who: args.who || 'aiko' };
+      }
+      return { type: 'aiko', sub: args.sub || 'follow', target: target || args.target || '' };
+    }
+    case 'talk': return { type: 'action', action: 'talk', target };
+    case 'recruit': return { type: 'recruit', target };
+    case 'release': return { type: 'release', target };
+    case 'give': return { type: 'action', action: 'give', target, item: args.item || args.what || '' };
+    case 'steal': return { type: 'steal', target };
+    case 'kiss': return { type: 'action', action: 'kiss', target };
+    case 'intimate':
+      return { type: 'sex', target, force: !!intent.forced, template: args.template || null };
+    case 'work': return { type: 'request', target };
+    case 'possess': return { type: 'aiko', sub: 'possess', target };
+    case 'search':
+    case 'ward':
+      return null; // narration + effects only; no local handler
+    default:
+      return null;
+  }
+}
+
+function validateRelationshipIntent(local, gameState, present) {
+  const check = local && local.type === 'action' && local.action === 'kiss'
+    ? kissAllowed
+    : local && local.type === 'sex'
+      ? sexAllowed
+      : null;
+  if (!check) return true;
+  const targetId = String(local.target || '').toLowerCase();
+  const target = (Array.isArray(present) ? present : []).find(
+    (entity) => String(entity && entity.id || '').toLowerCase() === targetId,
+  );
+  if (!target) return 'That person is not here.';
+  return check(target, gameState);
+}
+
 export const AikoServer = {
   async generate({ gameState, speaker = 'aiko', history = [] }) {
     // Default template backend. A live server would receive:
@@ -312,4 +548,82 @@ export const AikoServer = {
   },
   // Exposed so a server backend can request the compact context itself.
   summarizeState,
+
+  // Live freeform-action path: POST the player's typed text plus the
+  // extended compact state to the Aiko-chan server's /api/onmyoji/do
+  // endpoint, apply the returned effects, and route the returned intent
+  // into the game's existing action handlers (via hooks.route).
+  //
+  // args: { text, gameState, hooks, timeoutMs }
+  // hooks: { present, party, route(intent), sys(text), afterEffects(notes), url }
+  //   present/party feed summarizeStateExtended; route receives a local
+  //   intent shaped exactly like chat.js parseCommand() output; sys shows
+  //   system text; url optionally overrides the configured server URL.
+  // Returns true when the server handled the command (success OR refusal),
+  // false on ANY failure (unreachable, timeout, bad JSON) — the caller
+  // falls through to the offline parser. Never throws.
+  async act({ text, gameState, hooks = {}, timeoutMs = 10000 }) {
+    const sys = typeof hooks.sys === 'function' ? hooks.sys : () => {};
+    if (Date.now() < serverCooldownUntil) return false; // recent failure: stay offline
+    const url = String(hooks.url || serverUrl()).replace(/\/+$/, '');
+    const ctl = new AbortController();
+    const t = setTimeout(() => ctl.abort(), timeoutMs);
+    try {
+      const r = await fetch(url + '/api/onmyoji/do', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          text,
+          state: summarizeStateExtended(gameState, {
+            present: hooks.present || [],
+            party: hooks.party || [],
+          }),
+        }),
+        signal: ctl.signal,
+      });
+      if (!r.ok) throw new Error('server answered ' + r.status);
+      const data = await r.json();
+      if (!data || typeof data !== 'object') throw new Error('bad JSON');
+      serverCooldownUntil = 0; // the server spoke: clear any cooldown
+      if (data.ok !== true || data.refused === true) {
+        // Refused (or explicit error): show the reason, apply NO effects.
+        sys(data.narration || data.reason || 'The spirits decline to do that.');
+        return true;
+      }
+      const local = mapFreeformIntent(data.intent);
+      const validation = validateRelationshipIntent(local, gameState, hooks.present);
+      if (validation !== true) {
+        sys(typeof validation === 'string' ? validation : 'That is not allowed here.');
+        return true;
+      }
+      let notes = [];
+      try {
+        notes = applyServerEffects(gameState, data.effects);
+      } catch (err) {
+        // A bad effect descriptor must not re-trigger the offline path
+        // (effects may already be partially applied) — report and stay handled.
+        sys('The spirits falter: ' + (err && err.message ? err.message : err));
+      }
+      if (data.narration) sys(data.narration);
+      if (local && typeof hooks.route === 'function') {
+        try {
+          hooks.route(local);
+        } catch (err) {
+          // A routing failure must not re-trigger the offline path (effects
+          // were already applied) — report it and stay handled.
+          sys('The spirits falter: ' + (err && err.message ? err.message : err));
+        }
+      }
+      if (typeof hooks.afterEffects === 'function') {
+        try { hooks.afterEffects(notes); } catch (_) { /* display-only */ }
+      }
+      return true;
+    } catch (err) {
+      // ANY failure: back off for a while, then fall through to offline.
+      serverCooldownUntil = Date.now() + SERVER_COOLDOWN_MS;
+      return false;
+    } finally {
+      clearTimeout(t);
+    }
+  },
 };

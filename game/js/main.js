@@ -17,6 +17,7 @@ import * as Party from './party.js';
 import * as Combat from './combat.js';
 import * as History from './history.js';
 import * as Factions from './factions.js';
+import { AikoServer, collectPresent, collectParty } from './aiko.js';
 
 const $ = (id) => document.getElementById(id);
 const esc = (t) => String(t).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -28,6 +29,7 @@ let pendingAfterMove = null;
 let aikoMood = 'happy';
 let pendingQuestCombat = null; // enemyId from a topic/choice ef.combat effect
 let questCombat = null; // { c, enemyId } while a quest duel panel is open
+let commandGeneration = 0;
 
 // ---------------- boot ----------------
 function boot() {
@@ -216,11 +218,34 @@ $('chatinput').addEventListener('keydown', (e) => {
 // ---------------- command bar ----------------
 $('btn-cmd').onclick = runCommand;
 $('cmdinput').addEventListener('keydown', (e) => { if (e.key === 'Enter') runCommand(); });
-function runCommand() {
+async function runCommand() {
   if (!world) return;
   const t = $('cmdinput').value.trim(); $('cmdinput').value = '';
   if (!t) return;
   say('me', '❯ ' + t);
+  // Live freeform path: ask the Aiko-chan server first. act() returns true
+  // when the server handled the command (success or refusal) and false on
+  // ANY failure (unreachable, timeout, bad JSON) — then we fall through to
+  // the offline parser below. The command box never hard-fails.
+  const generation = ++commandGeneration;
+  const mapId = world.mapId;
+  try {
+    const handled = await AikoServer.act({
+      text: t,
+      gameState: S,
+      timeoutMs: 2500,
+      hooks: {
+        present: collectPresent(world),
+        party: collectParty(S),
+        route: (intent) => {
+          if (generation === commandGeneration && world && world.mapId === mapId) execIntent(intent, t);
+        },
+        sys: (msg) => say('sys', msg),
+        afterEffects: () => { updateHud(); St.saveGame(S); },
+      },
+    });
+    if (handled) return;
+  } catch (e) { /* fall through to the offline path */ }
   const ctx = { S, nearby: world.npcs.map(n => ({ id: n.id, name: n.rec.name })) };
   const it = Chat.parseCommand(t, ctx);
   execIntent(it, t);
@@ -261,6 +286,29 @@ function execIntent(it, raw) {
       doQuickAction(it.action, findNpcRef(it.target)); break;
     }
     case 'sex': doSexIntent(findNpcRef(it.target), it.template, it.force); break;
+    case 'steal': doSteal(it.target); break;
+    case 'flee': {
+      if (questCombat) { doCombatAction({ type: 'flee' }); break; }
+      say('sys', 'There is nothing to flee from right now.');
+      break;
+    }
+    case 'shikigamiAttack': {
+      // "(tell|order) <who> to attack <target>" and the server's
+      // aiko_command strike: same handler as the shikigami attack order.
+      const actor = Party.findShikigami(S, it.who || 'aiko');
+      if (!actor) {
+        say('sys', `No bound shikigami called "${it.who}" can take that order.`);
+        break;
+      }
+      const r = Party.setShikigamiOrder(S, 'attack', actor.id);
+      if (!r.ok) { say('sys', r.msg); break; }
+      const h = it.target ? findHostileRef(it.target) : null;
+      if (h) { say('sys', `🦊 ${actor.name} darts at ${h.name}!`); doMelee(h.id); break; }
+      const n = it.target ? findNpcRef(it.target) : null;
+      say('sys', n ? `🦊 ${actor.name} lunges at ${n.rec.name}, claws flashing!` : r.msg);
+      St.saveGame(S);
+      break;
+    }
     case 'recruit': doRecruit(it.target); break;
     case 'dismiss': doDismiss(it); break;
     case 'party': say('sys', Party.partyList(S)); break;
@@ -628,13 +676,18 @@ function openNpcPanel(n) {
   }
 }
 function doQuickAction(actionId, n) {
+  // Rest needs no target. Kiss/sex are typed-only paths now (their preset
+  // buttons were removed); they keep their gating via kissAllowed/sexAllowed.
+  if (actionId === 'rest') { doRest(); return; }
   if (!n) { toast('No one selected — click a person first.'); return; }
   if (actionId === 'talk') { walkAdjacent(n, () => openTopics(n)); return; }
+  if (actionId === 'sex') { doSexIntent(n, null, false); return; }
+  if (actionId === 'kiss') { doKissAction(n); return; }
   const qa = Act.quickActionById(actionId);
+  if (!qa) { toast("Can't do that now."); return; }
   const shape = npcShape(n);
   const ok = qa.allowed(shape, S);
   if (ok !== true) { toast(typeof ok === 'string' ? ok : 'Can\'t do that now.'); return; }
-  if (actionId === 'sex') { doSexIntent(n, null, false); return; }
   walkAdjacent(n, () => {
     n.facing = n.x < world.player.x ? 'right' : n.x > world.player.x ? 'left' : n.y < world.player.y ? 'down' : 'up';
     const beats = Act.actSequence(actionId, shape, S);
@@ -646,9 +699,46 @@ function doQuickAction(actionId, n) {
     }
     playBeats(beats, { self: {}, [n.id]: {} }, n.rec.name, () => {
       lastEvent = `${actionId} with ${n.rec.name}`;
-      if (actionId === 'kiss') aikoSay(brain.respond(`i kissed ${n.rec.name}`, brainCtx()).text, 'love');
     });
   });
+}
+// Typed-only kiss path (the 💋 preset button was removed): same gating and
+// the same kiss scene beats the button used to reach.
+function doKissAction(n) {
+  const ok = Act.kissAllowed(npcShape(n), S);
+  if (ok !== true) { toast(typeof ok === 'string' ? ok : "Can't do that now."); return; }
+  walkAdjacent(n, () => {
+    n.facing = n.x < world.player.x ? 'right' : n.x > world.player.x ? 'left' : n.y < world.player.y ? 'down' : 'up';
+    const beats = Act.actSequence('kiss', npcShape(n), S);
+    playBeats(beats, { self: {}, [n.id]: {} }, n.rec.name, () => {
+      lastEvent = `kiss with ${n.rec.name}`;
+      aikoSay(brain.respond(`i kissed ${n.rec.name}`, brainCtx()).text, 'love');
+    });
+  });
+}
+// Rest until morning, wherever you stand (the typed "rest" command and the
+// server's rest verb). Inns (places.js restAtInn) remain the paid luxury.
+function doRest() {
+  St.restUntilMorning(S);
+  St.healPlayer(S, S.player.maxHp);
+  S.player.rei = S.player.maxRei;
+  processHistory();
+  St.addNews(S, '🛏️ Rested under the open sky until morning.');
+  say('sys', '🛏️ You rest until morning, fully restored.');
+  updateHud(); St.saveGame(S);
+  lastEvent = 'rested';
+}
+// Deterministic offline steal fallback: karma hit + narration. No invented
+// items, no gold — the server path computes real effects when it's online.
+function doSteal(target) {
+  const n = target ? findNpcRef(target) : null;
+  if (!n) { say('sys', `Steal from whom? Nobody called "${target}" is here.`); return; }
+  if (Act.isAiko(npcShape(n))) { say('sys', 'You would never steal from Aiko.'); return; }
+  const r = St.addKarma(S, -5);
+  say('sys', `You palm a few coins from ${n.rec.name} when they glance away. (Karma −5 → ${r.tier})`);
+  aikoSay(`Tch. Thievery, ${S.player.name}? …I saw nothing. I saw everything.`, 'angry');
+  updateHud(); St.saveGame(S);
+  lastEvent = 'stole from ' + n.rec.name;
 }
 function playBeats(beats, actors, title, onDone) {
   openPanel(`<button class="close-x" id="p-x">✕</button><h3>${esc(title)}</h3>
@@ -736,7 +826,7 @@ function applyEffects(effects) {
 function doSexIntent(n, templateId, force) {
   if (!n) { toast('Who with? Click someone first.'); return; }
   const shape = npcShape(n);
-  const ok = Act.quickActionById('sex').allowed(shape, S);
+  const ok = Act.sexAllowed(shape, S);
   if (ok !== true) { toast(typeof ok === 'string' ? ok : 'Not now.'); return; }
   const consent = Act.consentFor(S, n.id, !!force);
   if (!force && consent === 'unsure') {

@@ -19,6 +19,7 @@ export const SEX_VERBS = [
   'make love to',
   'make love with',
   'have sex with',
+  'be intimate with',
   'go to bed with',
   'take to bed',
   'spend the night with',
@@ -51,6 +52,16 @@ function findNpc(nearby, frag) {
     nearby.find((n) => norm(n.name).includes(f) || norm(n.id).includes(f)) ||
     null
   );
+}
+
+function findBoundShikigami(S, frag) {
+  const f = norm(frag);
+  const bound = S && S.world && Array.isArray(S.world.shikigami) ? S.world.shikigami : [];
+  if (!f) return null;
+  const exact = bound.find((g) => norm(g.id) === f || norm(g.name) === f);
+  if (exact) return exact;
+  const matches = bound.filter((g) => norm(g.name).includes(f));
+  return matches.length === 1 ? matches[0] : null;
 }
 
 const hasWord = (t, ...words) => words.some((w) => new RegExp(`\\b${w}\\b`).test(t));
@@ -127,7 +138,7 @@ export function parseCommand(input, ctx = {}) {
   }
 
   // -- social / combat actions ---------------------------------------------------
-  m = t.match(/^(talk|speak|chat)\s+(?:to|with)\s+(.+)$/) || t.match(/^(talk|speak)\s+(.+)$/);
+  m = t.match(/^(talk|speak|chat|greet)\s+(?:to|with)\s+(.+)$/) || t.match(/^(talk|speak|greet)\s+(.+)$/);
   if (m) {
     const frag = m[2];
     if (hasWord(frag, 'aiko') || frag === 'me' || frag === 'myself') return { type: 'chat' };
@@ -151,7 +162,7 @@ export function parseCommand(input, ctx = {}) {
       ? { type: 'action', action: 'kiss', target: npc.id }
       : { type: 'unknown', hint: `Kiss whom? Nobody called "${m[1]}" is here.` };
   }
-  m = t.match(/^(attack|fight|hit|strike|kill|slay|challenge)\s+(?:the\s+)?(.+)$/);
+  m = t.match(/^(attack|fight|hit|strike|kill|slay|murder|assassinate|punch|smack|challenge)\s+(?:the\s+)?(.+)$/);
   if (m) {
     const npc = findNpc(nearby, m[2]);
     return npc
@@ -235,6 +246,44 @@ export function parseCommand(input, ctx = {}) {
 
   // -- join a raging historical battle ------------------------------------------------------------------
   if (/^join battle$/.test(t)) return { type: 'battle', sub: 'join' };
+
+  // -- freeform phrasing (natural language; the verb need not come first) ------------
+  // Placed before the party/shikigami verb-first commands so "recruit X as a
+  // shikigami" wins over plain "recruit X". These reuse the same findNpc
+  // resolver and the same intent shapes as the verb-first commands, so they
+  // flow into the same game handlers. Plain "recruit <name>" still recruits
+  // to the party (backward compatible).
+  m = t.match(/^(tell|order|command|ask)\s+aiko\s+to\s+(attack|strike|hit|kill|fight)\s+(.+)$/);
+  if (m) {
+    const name = stripArticle(m[3]);
+    const npc = findNpc(nearby, name);
+    return { type: 'shikigamiAttack', who: 'aiko', target: npc ? npc.id : name };
+  }
+  m = t.match(/^(tell|order)\s+(.+?)\s+to\s+(attack|strike)\s+(.+)$/);
+  if (m) {
+    const actorName = stripArticle(m[2]);
+    const actor = findBoundShikigami(ctx.S, actorName);
+    if (!actor) {
+      return { type: 'unknown', hint: `No bound shikigami called "${actorName}" can take that order.` };
+    }
+    const name = stripArticle(m[4]);
+    const npc = findNpc(nearby, name);
+    return { type: 'shikigamiAttack', who: actor.id, target: npc ? npc.id : name };
+  }
+  m = t.match(/^turn\s+(.+?)\s+into\s+(?:(?:my|a)\s+)?shikigami$/)
+    || t.match(/^(?:recruit|enlist|hire)\s+(.+?)\s+as\s+(?:(?:my|a)\s+)?shikigami$/)
+    || t.match(/^make\s+(.+?)\s+(?:(?:my|a)\s+)?shikigami$/);
+  if (m) {
+    const name = stripArticle(m[1]);
+    const npc = findNpc(nearby, name);
+    return { type: 'bind', target: npc ? npc.id : name };
+  }
+  m = t.match(/^(steal from|rob|pickpocket)\s+(.+)$/);
+  if (m) {
+    const name = stripArticle(m[2]);
+    const npc = findNpc(nearby, name);
+    return { type: 'steal', target: npc ? npc.id : name };
+  }
 
   // -- party ------------------------------------------------------------------------------------------
   m = t.match(/^recruit\s+(.+)$/) || t.match(/^(team up with|hire|enlist)\s+(.+)$/);
