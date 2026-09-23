@@ -235,11 +235,16 @@ export function meleeAttack(S, world, hostileId, opts = {}) {
   lines.push(`You strike ${h.name} for ${d} damage.`);
 
   // --- party assist ---
+  // Capture-objective targets are never killed by assists: the player must
+  // land the capturing blow themselves (or the mission fails on a kill).
   const party = (S.world && S.world.party) || [];
+  const nonLethal = !!h.missionId && h.role === 'target';
   if (h.hp > 0 && party.length) {
     let total = 0;
     for (const m of party) {
-      const md = Math.min(3 + (m.level || 1) * 2, 15);
+      let md = Math.min(3 + (m.level || 1) * 2, 15);
+      if (nonLethal) md = Math.min(md, h.hp - 1);
+      if (md <= 0) break;
       if (total + md > 30) break; // cap total party bonus
       total += md;
       h.hp -= md;
@@ -253,14 +258,19 @@ export function meleeAttack(S, world, hostileId, opts = {}) {
     const sk = (S.world && S.world.shikigami) || [];
     for (const s of sk) {
       if (!s || !s.summoned || s.aiko) continue;
-      h.hp -= 4;
-      lines.push(`${memberName(s)} rends for 4!`);
+      const sd = nonLethal ? Math.min(4, h.hp - 1) : 4;
+      if (sd <= 0) break;
+      h.hp -= sd;
+      lines.push(`${memberName(s)} rends for ${sd}!`);
       if (h.hp <= 0) break;
     }
     if (h.hp > 0 && S.aiko && S.aiko.summoned) {
       const ad = 6 + (S.aiko.level || S.player.level || 1);
-      h.hp -= ad;
-      lines.push(`Aiko's foxfire sears for ${ad}!`);
+      const fad = nonLethal ? Math.min(ad, h.hp - 1) : ad;
+      if (fad > 0) {
+        h.hp -= fad;
+        lines.push(`Aiko's foxfire sears for ${fad}!`);
+      }
     }
   }
 

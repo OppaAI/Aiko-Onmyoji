@@ -233,6 +233,9 @@ export function parseCommand(input, ctx = {}) {
   m = t.match(/^travel\s+(north|n|south|s|east|e|west|w|up|down|left|right)$/);
   if (m) return { type: 'travel', dir: DIRS[m[1]] };
 
+  // -- join a raging historical battle ------------------------------------------------------------------
+  if (/^join battle$/.test(t)) return { type: 'battle', sub: 'join' };
+
   // -- party ------------------------------------------------------------------------------------------
   m = t.match(/^recruit\s+(.+)$/) || t.match(/^(team up with|hire|enlist)\s+(.+)$/);
   if (m) {

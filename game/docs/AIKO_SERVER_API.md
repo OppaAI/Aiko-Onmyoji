@@ -24,25 +24,35 @@ monkey-patch `AikoServer.generate`** — no other game file needs to change:
 import { AikoServer } from './aiko.js';
 
 AikoServer.generate = async ({ gameState, speaker, history }) => {
-  const res = await fetch('https://your-aiko-server/api/onmyoji/dialogue', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      state: AikoServer.summarizeState(gameState), // compact context
-      speaker,
-      history: history.slice(-12),
-    }),
-  });
-  if (!res.ok) {
-    throw new Error(`Dialogue request failed: ${res.status} ${res.statusText}`);
+  try {
+    const res = await fetch('https://your-aiko-server/api/onmyoji/dialogue', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        state: AikoServer.summarizeState(gameState), // compact context
+        speaker,
+        history: history.slice(-12),
+      }),
+    });
+    if (!res.ok) {
+      throw new Error(`Dialogue request failed: ${res.status} ${res.statusText}`);
+    }
+    const data = await res.json();
+    if (typeof data?.text !== 'string') {
+      throw new TypeError('Dialogue response must contain a string `text` field');
+    }
+    return data.text;
+  } catch (err) {
+    // Server unreachable or bad response: fall back to the local template
+    // engine so dialogue never hard-fails in-game.
+    console.warn('[aiko-server] falling back to template engine:', err.message);
+    return AikoTemplates.generate({ gameState, speaker, history });
   }
-  const data = await res.json();
-  if (typeof data?.text !== 'string') {
-    throw new TypeError('Dialogue response must contain a string `text` field');
-  }
-  return data.text; // fall back to template engine on error
 };
 ```
+
+`AikoTemplates.generate` is the bundled offline template engine (same interface as
+`AikoServer.generate`: `{ gameState, speaker, history }` → `string`).
 
 ## Compact state (`summarizeState`)
 

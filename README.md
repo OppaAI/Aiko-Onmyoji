@@ -64,7 +64,9 @@ browser (or serve the `game/` folder). Pure ES modules.
 
 🔞 text content exists ONLY for explicitly-adult female NPCs (flagged
 `adult: true` in `game/js/dialogue.js`, ages stated in narration — all in
-their 20s–30s), and is always fully consensual. Portraits are non-explicit;
+their 20s–30s), and may be consensual or forced depending on the player's
+actions; forced encounters cost karma, provoke guards, and can turn
+factions hostile. Portraits are non-explicit;
 adult content is dialogue-text only, behind 🔞 topic labels. **Aiko is never
 a romantic or sexual subject** — she stays strictly platonic, as do all
 minors and ambiguous-age NPCs. No explicit imagery is generated; no image

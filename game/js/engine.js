@@ -307,7 +307,7 @@ export class World {
       if (kind === 'aiko') {
         const hover = this.aikoMode === 'fly' ? -14 + Math.sin(e.bob) * 4 : Math.sin(e.bob) * 2;
         ctx.globalAlpha = 0.92;
-        Spr.drawSprite(ctx, e.spec, cx, baseY + hover, { scale: 2, frame: this.frame % 40 < 20 ? 0 : 1, facing: e.facing, pose: this.aikoMode === 'fly' ? 'fly' : 'stand' });
+        Spr.drawSprite(ctx, e.spec, cx - 6 * 2, baseY - 18 * 2 + hover, { scale: 2, frame: this.frame % 40 < 20 ? 0 : 1, facing: e.facing, pose: this.aikoMode === 'fly' ? 'fly' : 'stand' });
         ctx.globalAlpha = 1;
         if (this.aikoMode === 'fly') { ctx.fillStyle = 'rgba(0,0,0,.25)'; ctx.fillRect(cx - 8, baseY - 2, 16, 3); }
         continue;
@@ -316,8 +316,9 @@ export class World {
       const pose = isSelf ? (this._selfPose || (this.path.length || Object.values(this.keys).some(Boolean) ? 'walk' : 'stand')) : (e.pose || 'stand');
       const dx = (isSelf ? this._selfDx : e.dx) || 0, dy = (isSelf ? this._selfDy : e.dy) || 0;
       const walking = isSelf ? (this.path.length > 0 || Object.values(this.keys).some(Boolean)) : (Math.abs(e.x - e.fx) > 0.05);
-      Spr.drawSprite(ctx, e.spec, cx + dx, baseY + dy, {
-        scale: 2.4, frame: walking ? (this.frame % 30 < 15 ? 0 : 1) : 0,
+      const sc = 2.4;
+      Spr.drawSprite(ctx, e.spec, cx - 6 * sc + dx, baseY - 18 * sc + dy, {
+        scale: sc, frame: walking ? (this.frame % 30 < 15 ? 0 : 1) : 0,
         facing: e.facing, pose: walking && pose === 'stand' ? 'walk' : pose,
       });
       // nameplate for NPCs

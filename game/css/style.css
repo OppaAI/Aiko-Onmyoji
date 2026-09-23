@@ -72,3 +72,6 @@ html, body { margin: 0; padding: 0; height: 100%; background: #0d0f1a; color: #e
   #side { width: 240px; min-width: 200px; }
   #panel { width: 280px; }
 }
+
+/* fine print (title screen disclosures) */
+.fine { font-size: 11px; color: #b9b3d6; opacity: .85; line-height: 1.5; }

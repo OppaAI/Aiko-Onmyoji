@@ -7,7 +7,9 @@ irreverent humor in an original historical sandbox.
 
 **Adult content policy:** 🔞 text content exists ONLY for explicitly-adult
 female NPCs (flagged `adult: true` in `js/dialogue.js`, ages stated in
-narration — all in their 20s–30s), and is always fully consensual. Portraits
+narration — all in their 20s–30s), and may be consensual or forced depending
+on events; forced encounters carry negative consequences (karma loss, guards,
+faction hostility). Portraits
 are non-explicit; the adult content lives in dialogue text only, behind 🔞
 topic labels. **Aiko is never a romantic or sexual subject** — she is
 young/minor-coded and stays strictly platonic, as do all minors and any

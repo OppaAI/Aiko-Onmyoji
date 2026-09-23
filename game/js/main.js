@@ -15,6 +15,8 @@ import * as Missions from './missions.js';
 import * as Hostiles from './hostiles.js';
 import * as Party from './party.js';
 import * as Combat from './combat.js';
+import * as History from './history.js';
+import * as Factions from './factions.js';
 
 const $ = (id) => document.getElementById(id);
 const esc = (t) => String(t).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -24,6 +26,8 @@ let selectedNpc = null; // npcId
 let lastEvent = '';
 let pendingAfterMove = null;
 let aikoMood = 'happy';
+let pendingQuestCombat = null; // enemyId from a topic/choice ef.combat effect
+let questCombat = null; // { c, enemyId } while a quest duel panel is open
 
 // ---------------- boot ----------------
 function boot() {
@@ -46,6 +50,7 @@ function showTitle(cv) {
   openPanel(`<h3>🦊 Aiko Onmyoji: Sengoku Spirits</h3>
     <p>1570, the Sengoku era. You are an onmyoji walking the roads of Japan with Aiko, your fox-spirit shikigami.</p>
     <p>Move with <b>arrow keys / WASD</b> or <b>click a tile</b>. Talk to Aiko on the right. Type commands below.</p>
+    <p class="fine">🔞 An original historical sandbox. Adult romance text appears only in 🔞 topics with explicitly adult NPCs — never Aiko, never minors. Imagery stays non-explicit.</p>
     <div class="btn-row"><button id="t-new">✨ New game</button>
     ${St.hasSave() ? '<button id="t-cont">📂 Continue</button>' : ''}</div>`);
   $('t-new').onclick = () => { S = St.newGame('Onmyoji'); St.saveGame(S); startGame(true); };
@@ -55,6 +60,10 @@ function startGame(fresh) {
   closePanel();
   Places.ensureState(S); Missions.ensureState(S); Hostiles.ensureState(S); Party.ensureState(S);
   S.world.genLinks = S.world.genLinks || {};
+  // Reconnect the historical lifecycle: dated events, faction effects, battle hooks.
+  History.setFactionHooks({ changeStrength: Factions.changeStrength, destroyFaction: Factions.destroyFaction });
+  History.setImpactHooks({ addFame: (s, d) => St.addFame(s, d), addExp: (s, n) => St.addExp(s, n) });
+  History.setFactionName((fid) => Factions.factionDisplayName(S, fid));
   world = new World($('stage'), S, {
     toast, onWarp: doWarp, onBumpDoor: doorBump,
     onChoreoBeat: choreoBeatPanel, onPlayerDeath: (info) => playerDeath(info),
@@ -81,6 +90,22 @@ function loadLocationEx(locId, fromId, fromDir) {
   Party.loadFollowers(world, S);
   Party.spawnAnimals(world, S);
   Hostiles.spawnForMap(world, S);
+}
+// ---- historical lifecycle ------------------------------------------------
+// Runs dated history whenever game time advances: fires events, applies their
+// effects, and flags battles the player is close enough to join.
+function processHistory() {
+  const fired = History.processDate(S);
+  for (const line of fired) say('sys', line);
+  if (S.world.pendingBattle) {
+    const b = History.BATTLES[S.world.pendingBattle];
+    if (b) {
+      const sides = History.battleSidesText(b);
+      say('sys', `📯 ${b.name} rages near ${world.map.name} — ${sides.a} face ${sides.b}. Type "join battle" to take the field, or let history unfold without you.`);
+      aikoSay(brain.respond(`a battle is happening nearby: ${b.name}`, brainCtx()).text, 'surprised');
+    }
+  }
+  if (fired.length) { updateHud(); St.saveGame(S); }
 }
 function dirFromWarp(w) {
   if (w.x === 0) return 'west';
@@ -266,6 +291,7 @@ function execIntent(it, raw) {
     case 'capture': doCapture(it.target); break;
     case 'shop': doShop(it.sub, it.item); break;
     case 'travel': doTravel(it.dir); break;
+    case 'battle': doJoinBattle(); break;
     case 'request': doRequest(it.target); break;
     case 'aiko': doAiko(it.sub, it.target); break;
     case 'door': {
@@ -279,7 +305,7 @@ function execIntent(it, raw) {
       say('sys', `${S.player.name} — Lv${S.player.level} ❤️${S.player.hp}/${S.player.maxHp} 🪙${S.player.gold} ⚖️${St.karmaTier(S.player.karma)} 📍${world.map.name} 📅${St.dateLabel(S)}`);
       break;
     case 'help':
-      say('sys', 'Commands: go north/south/east/west · travel north (new lands) · talk to <name> · kiss <name> · attack <name> · recruit <name> · bind <name> (shikigami, max 7) · shikigami / summon <name> / shikigami attack · enter the bar/shop/inn · missions · accept mission <n> · buy/sell <item> · aiko fly/land/hide · possess <name> · release · where am i');
+      say('sys', 'Commands: go north/south/east/west · travel north (new lands) · talk to <name> · kiss <name> · attack <name> · recruit <name> · bind <name> (shikigami, max 7) · shikigami / summon <name> / shikigami attack · enter the bar/shop/inn · missions · accept mission <n> · buy/sell <item> · join battle (when one rages nearby) · aiko fly/land/hide · possess <name> · release · where am i');
       break;
     default: say('sys', it.hint || "Hmm? Try 'help'.");
   }
@@ -372,10 +398,15 @@ function doExit() {
 }
 function doTravel(dir) {
   const dn = { up: 'north', down: 'south', left: 'west', right: 'east' }[dir] || dir;
-  const nid = MG.neighborFor(world.mapId, dn);
-  say('sys', `🧭 You travel ${dn}, beyond the known roads…`);
+  // Honor previously recorded return links (typed travel matches edge warps).
+  const links = S.world.genLinks[world.mapId] || (S.world.genLinks[world.mapId] = {});
+  const nid = links[dn] || MG.neighborFor(world.mapId, dn);
+  links[dn] = nid;
+  say('sys', `🧭 You travel ${dn}, beyond the known roads… (6 hours pass)`);
   loadLocationEx(nid, world.mapId, dn);
   St.discover(S, nid);
+  St.advanceHours(S, 6); // the road takes time: history marches on
+  processHistory();
   updateHud(); St.saveGame(S);
   lastEvent = 'traveled to ' + world.map.name;
   aikoSay(brain.respond(`we arrived at ${world.map.name}`, brainCtx()).text, 'happy');
@@ -467,7 +498,7 @@ function buildingOption(bldg, opt) {
     case 'drink': { const r = Places.drinkAtBar(S); buildingSay(r.msg); updateHud(); St.saveGame(S); break; }
     case 'board': showBoard(bldg); break;
     case 'buy': case 'sell': showTrade(bldg, opt); break;
-    case 'rest': { const r = Places.restAtInn(S); buildingSay(r.msg); updateHud(); St.saveGame(S); break; }
+    case 'rest': { const r = Places.restAtInn(S); buildingSay(r.msg); processHistory(); updateHud(); St.saveGame(S); break; }
     case 'pray': { const r = Places.prayAtShrine(S); buildingSay(r.msg); updateHud(); St.saveGame(S); break; }
     case 'knock': { const r = Places.knockHouse(S, bldg.id); buildingSay(r.msg); break; }
     case 'meet': showStaff(); break;
@@ -662,7 +693,14 @@ function runTopic(n, tid) {
           const n2 = applyEffects(c.effects);
           const cb = typeof c.beats === 'function' ? c.beats(S) : c.beats;
           box.innerHTML = cb.map(x => `<p>${esc(beatText(x))}</p>`).join('') + (n2.length ? `<p><small>${esc(n2.join(' · '))}</small></p>` : '');
+          if (pendingQuestCombat) {
+            box.innerHTML += `<div class="btn-row"><button id="b-fight">⚔️ Begin battle</button></div>`;
+            $('b-fight').onclick = () => startQuestCombat(pendingQuestCombat);
+          }
         });
+      } else if (pendingQuestCombat) {
+        box.innerHTML += `<div class="btn-row"><button id="b-fight">⚔️ Begin battle</button></div>`;
+        $('b-fight').onclick = () => startQuestCombat(pendingQuestCombat);
       }
       updateHud(); St.saveGame(S);
       return;
@@ -687,6 +725,9 @@ function applyEffects(effects) {
     if (ef.quest) { try { Quests.setQuestStage(S, ef.quest[0], ef.quest[1]); notes.push('📜 Quest updated'); } catch {} }
     if (ef.qchoice) { Quests.setQuestChoice(S, ef.qchoice[0], ef.qchoice[1]); }
     if (ef.qcomplete) { Quests.completeQuest(S, ef.qcomplete); notes.push('📜 Quest complete'); }
+    // Side-quest combat: launch the full combat.js duel flow (victory feeds
+    // back into the quest via Quests.onCombatVictoryQuest).
+    if (ef.combat) { pendingQuestCombat = ef.combat; notes.push('⚔️ Battle is joined!'); }
   }
   return notes;
 }
@@ -811,6 +852,112 @@ $('btn-menu').onclick = () => {
   $('m-title').onclick = () => location.reload();
   $('m-x').onclick = closePanel;
 };
+
+// ---- join a raging historical battle ----------------------------------------
+function doJoinBattle() {
+  const bid = S.world.pendingBattle;
+  const b = bid && History.BATTLES[bid];
+  if (!b) { toast('No battle rages within your reach.'); return; }
+  const sides = History.battleSidesText(b);
+  openPanel(`<h2>📯 ${esc(b.name)}</h2>
+    <div class="dim">${esc(sides.a)} face ${esc(sides.b)} — ${esc(b.d || '')}</div>
+    <p>Which side takes your blade?</p>
+    <div class="btn-row">
+      <button data-side="a">${esc(sides.a)}</button>
+      <button data-side="b">${esc(sides.b)}</button>
+      <button data-side="watch">👁 Watch from afar</button>
+    </div>`);
+  $('panel').querySelectorAll('[data-side]').forEach(btn => btn.onclick = () => {
+    const side = btn.dataset.side;
+    closePanel();
+    const fired = [];
+    if (side === 'watch') {
+      History.resolveBattle(S, bid, null, false, fired);
+    } else {
+      // personal skirmish against the enemy line, then the army's result
+      const won = S.player.atk + S.player.level * 3 + St.rand(0, 20) >= 22 + St.rand(0, 18);
+      say('sys', won
+        ? '⚔️ You cut through the enemy line — your side takes heart!'
+        : '⚔️ You are driven back, bloodied but standing.');
+      History.resolveBattle(S, bid, side, won, fired);
+    }
+    for (const l of fired) say('sys', l);
+    updateHud(); St.saveGame(S);
+  });
+}
+
+// ---------------- quest combat (full combat.js duel flow) ----------------
+// Side-quest choices with ef.combat land here: a real duel where victory (or
+// a spare) feeds back into the quest via Quests.onCombatVictoryQuest.
+function startQuestCombat(enemyId) {
+  closePanel(); pendingQuestCombat = null;
+  let c;
+  try { c = Combat.createCombat(S, enemyId); }
+  catch (e) { toast('No such foe stirs here.'); return; }
+  questCombat = { c, enemyId };
+  renderCombatPanel([`⚔️ ${c.enemy.name} blocks your path! ${c.enemy.taunt || ''}`]);
+}
+function hpRow(label, cur, max, color) {
+  const pct = Math.max(0, Math.min(100, Math.round(100 * cur / Math.max(1, max))));
+  return `<div class="dim">${esc(label)} ${cur}/${max}</div>
+    <div style="background:#300;border-radius:4px;height:10px;margin:2px 0 6px">
+      <div style="width:${pct}%;height:100%;border-radius:4px;background:${color}"></div></div>`;
+}
+function renderCombatPanel(roundLog) {
+  const { c } = questCombat, e = c.enemy;
+  const orderOpts = Object.entries(Combat.AIKO_ORDERS).map(([id, o]) =>
+    `<option value="${id}"${(c.aikoOrder || 'auto') === id ? ' selected' : ''} title="${esc(o.desc)}">${esc(o.name)}</option>`).join('');
+  openPanel(`
+    <h2>⚔️ ${esc(e.name)}</h2>
+    <div class="dim">${e.kind === 'yokai' ? '👹 yokai' : '🗡 ' + esc(e.faction || 'foe')} — ${esc(e.desc || '')}</div>
+    ${hpRow(e.name + ' HP', e.hp, e.maxHp, '#e33')}
+    ${hpRow('You', S.player.hp, S.player.maxHp, '#5b5')}
+    ${hpRow('Aiko', S.aiko.hp, S.aiko.maxHp, '#5af')}
+    <div id="combat-log">${roundLog.map(l => `<p>${esc(l)}</p>`).join('')}</div>
+    <div class="btn-row">
+      <button data-ca="attack">⚔️ Attack</button>
+      ${Object.entries(Combat.SPELLS).map(([id, sp]) => `<button data-ca="spell" data-id="${id}" title="${esc(sp.desc)}">${esc(sp.name)} (${sp.cost} rei)</button>`).join('')}
+      <button data-ca="flee">🏃 Flee</button>
+    </div>
+    <div class="btn-row"><label class="dim">Aiko: <select id="aiko-order">${orderOpts}</select></label></div>`);
+  $('panel').querySelectorAll('[data-ca]').forEach(b =>
+    b.onclick = () => doCombatAction({ type: b.dataset.ca, id: b.dataset.id }));
+}
+function doCombatAction(action) {
+  if (!questCombat) return;
+  const { c } = questCombat;
+  c.aikoOrder = $('aiko-order') ? $('aiko-order').value : (c.aikoOrder || 'auto');
+  const { events, end } = Combat.doRound(c, S, action);
+  updateHud();
+  if (end === 'spare_offer') { renderSpareOffer(events); return; }
+  if (end) { finishCombat(end, events); return; }
+  renderCombatPanel(events);
+}
+function renderSpareOffer(events) {
+  const { c } = questCombat;
+  openPanel(`<h2>🙏 ${esc(c.enemy.name)} yields!</h2>
+    <div id="combat-log">${events.map(l => `<p>${esc(l)}</p>`).join('')}<p>The foe is beaten and begs for mercy.</p></div>
+    <div class="btn-row"><button id="sp-spare">Spare them</button><button id="sp-finish">Finish it</button></div>`);
+  $('sp-spare').onclick = () => finishCombat('victory', Combat.resolveSpare(c, S, 'spare').out, true);
+  $('sp-finish').onclick = () => finishCombat('victory', Combat.resolveSpare(c, S, 'finish').out, false);
+}
+function finishCombat(end, events, spared = false) {
+  const { c, enemyId } = questCombat || {};
+  questCombat = null;
+  closePanel();
+  for (const l of events) say('sys', l);
+  if (end === 'victory') {
+    const r = Combat.victoryRewards(c, S);
+    for (const l of r.out) say('sys', l);
+    const qn = Quests.onCombatVictoryQuest(S, enemyId, spared);
+    for (const l of qn) say('sys', l);
+  } else if (end === 'fled') {
+    say('sys', 'You live to fight another day.');
+  } else if (end === 'defeat') {
+    playerDeath({ src: 'struck down in single combat' });
+  }
+  updateHud(); St.saveGame(S);
+}
 
 // ---------------- panel helpers ----------------
 function openPanel(html) { const p = $('panel'); p.innerHTML = html; p.classList.remove('hidden'); }

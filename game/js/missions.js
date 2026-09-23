@@ -270,6 +270,13 @@ export function onTargetDown(S, targetDef, how = 'killed') {
   ensureState(S);
   const m = S.world.missions.active.find(a => a.id === targetDef.missionId);
   if (!m) return { done: false, lines: [`Nothing stirs. (No active commission matches.)`] };
+  if (m.state !== 'active') return { done: false, lines: [] }; // already resolved: ignore
+  const res = _resolveTargetDown(S, m, how);
+  if (res.done) _removeTargets(S, m.id); // resolved: stop respawning the target
+  return res;
+}
+
+function _resolveTargetDown(S, m, how) {
   const lines = [];
   switch (m.type) {
     case 'catch': {

@@ -425,7 +425,8 @@ export const NPCS = {
 
   // ---------------------------------------------------------------- adult romance NPCs
   // POLICY: 🔞 topics exist ONLY on NPCs flagged `adult: true` — explicitly adult
-  // women (ages stated in narration), always fully consensual. NEVER attach
+  // women (ages stated in narration), consensual or forced per player action
+  // (forced encounters carry negative consequences). NEVER attach
   // intimate topics to Aiko, to minors, or to ambiguous-age NPCs
   // (miko_hana stays strictly platonic). Portraits are non-explicit; the 🔞
   // content lives in dialogue text only.
@@ -837,7 +838,8 @@ export const NPCS = {
   },
 
   // ---------------------------------------------------------------------------
-  // Princesses of the great houses — adult, romanceable, fully consensual.
+  // Princesses of the great houses — adult, romanceable; consensual or forced
+  // per player action (forced encounters carry negative consequences).
   // (Same 18+ policy as the other adult NPCs: 🔞 text only, portraits modest.)
   // ---------------------------------------------------------------------------
   princess_iroha: {
