@@ -21,6 +21,13 @@ export const ARCHETYPES = {
   yurei:    { label: 'Yurei',         portrait: 'enemy_yurei.png',   fallback: '👻' },
   oni:      { label: 'Oni',           portrait: 'enemy_oni.png',     fallback: '👹' },
   daimyo:   { label: 'Daimyo',        portrait: 'enemy_samurai.png', fallback: '👑' },
+  // Adult romance archetypes — portraits are fully-clothed, tasteful bust portraits.
+  villager_woman: { label: 'Village Woman', portrait: 'npc_villager_woman.png', fallback: '👩‍🌾' },
+  merchant_woman: { label: 'Sakai Merchant', portrait: 'npc_merchant_woman.png', fallback: '💰' },
+  noble_lady:  { label: 'Court Lady',   portrait: 'npc_noble_lady.png',   fallback: '🎎' },
+  dancer:      { label: 'Shirabyoshi Dancer', portrait: 'npc_dancer.png', fallback: '💃' },
+  onna_musha:  { label: 'Woman Warrior', portrait: 'npc_onna_musha.png',  fallback: '🗡️' },
+  innkeeper:   { label: 'Innkeeper',    portrait: 'npc_innkeeper.png',    fallback: '🏮' },
 };
 
 // who: 'n' narrator | 'h' hero | 'a' aiko | npcId
@@ -404,6 +411,418 @@ export const NPCS = {
         beats: (s) => [
           { who: 'monk_enkai', text: '“The bow that is always bent,” the sutra says, “loses its spring.” Rest, diviner. Even spirits need sleep.' },
           { who: 'monk_enkai', text: 'Also: “Trust a smiling kappa exactly as far as you can throw one.” Which is not far. They are slippery.' },
+        ],
+      },
+    ],
+  },
+
+  // ---------------------------------------------------------------- adult romance NPCs
+  // POLICY: 🔞 topics exist ONLY on NPCs flagged `adult: true` — explicitly adult
+  // women (ages stated in narration), always fully consensual. NEVER attach
+  // intimate topics to Aiko, to minors, or to ambiguous-age NPCs
+  // (miko_hana stays strictly platonic). Portraits are non-explicit; the 🔞
+  // content lives in dialogue text only.
+
+  // ---------------- KUTSUKI ----------------
+  widow_hanae: {
+    name: 'Hanae the Widow', archetype: 'villager_woman', location: 'kutsuki', adult: true,
+    greet(s) {
+      const helped = s.world.questFlags.widows_rice && s.world.questFlags.widows_rice.choice === 'help';
+      return [
+        N('A woman in her early thirties straightens up from the rice paddies, pushing damp hair from her forehead. Her late husband\'s ring hangs on a cord at her throat.'),
+        ...(helped
+          ? [{ who: 'widow_hanae', text: 'The onmyoji! …You drove those ronin off, and my rice stands tall because of it. Come, sit — the tea is already hot. I find I am always expecting you.' }]
+          : [{ who: 'widow_hanae', text: `A traveler? Here? …Forgive me, I see few new faces since my husband fell at Okehazama. I am Hanae. ${karmaGreetExtra(s)}` }]),
+      ];
+    },
+    topics: [
+      {
+        id: 'paddies', label: 'Talk about the paddies',
+        beats: (s) => [
+          { who: 'widow_hanae', text: 'Rice is honest work. You plant, you weed, you pray, you harvest — and the rice does not lie to you the way people do.' },
+          { who: 'widow_hanae', text: 'My husband used to say a paddy is like a marriage: neglect it one season and it takes three to forgive you. …He would know. He neglected neither.' },
+        ],
+      },
+      {
+        id: 'evening', label: '💗 Spend an evening together',
+        need: (s) => !s.world.flags.aff_hanae,
+        beats: (s) => [
+          N('You stay past dusk. Hanae serves barley tea, and the talk drifts — the war, the weather, the dead. She laughs for the first time, startled by the sound of it.'),
+          { who: 'widow_hanae', text: 'Six years a widow, and I had forgotten what it is to simply… talk. To be looked at as a woman, not a problem to be solved. Thank you for this evening.' },
+          N('When you leave, her hand lingers on your sleeve a moment longer than custom requires.'),
+        ],
+        effects: [{ flag: ['aff_hanae', 2] }, { exp: 25 }, { memory: ['widow_hanae', 'note', 'Shared a long evening of talk'] }],
+      },
+      {
+        id: 'night', label: '🌙 Share her futon 🔞',
+        need: (s) => (s.world.flags.aff_hanae || 0) >= 2 && !s.world.flags.lover_hanae,
+        beats: (s) => [
+          N('The lamp burns low. Hanae sets down her tea bowl with deliberate care and looks at you — really looks at you — the way a woman looks when she has decided something.'),
+          { who: 'widow_hanae', text: 'Six years I have slept alone in this house. Six years of cold futon and colder mornings. …Tonight, I do not want to be alone. If you want me — say so plainly. I am too old for riddles.' },
+          H('Then come here, Hanae. No riddles.'),
+          N('She leads you past the butsudan where her husband\'s tablet watches without judgment, and slides the shoji closed. Her hands tremble only a little as she loosens her obi — then grow steadier as your fingers find the knot at her collar and ease her kimono from her shoulders.'),
+          N('Her skin is warm from the hearth and smells of rice straw and soap. She sighs into your shoulder when you touch her — a sound six years deep — and pulls you down onto the futon with a widow\'s frank hunger. No maiden shyness remains in her, only need and warmth and living heat, and she moves with you urgently, whispering your name like a prayer she had forgotten she knew.'),
+          N('After, she lies with her head on your chest, tracing idle patterns on your skin, and laughs softly — the first unguarded laugh you have heard from her. “Stay till the lamp gutters,” she whispers. “The morning will come soon enough.”'),
+        ],
+        effects: [{ flag: ['lover_hanae', true] }, { heal: 50 }, { exp: 60 }, { memory: ['widow_hanae', 'note', 'Lovers — spent the night together'] }],
+      },
+      {
+        id: 'lover', label: '🌅 Visit Hanae',
+        need: (s) => s.world.flags.lover_hanae && s.world.flags.lovday_hanae !== dateKey(s),
+        beats: (s) => [
+          N('Hanae\'s face lights up when she sees you on the path. She hurries over, unashamed, and takes your hand.'),
+          { who: 'widow_hanae', text: 'You came back. The nights are warmer when I know you might. …Stay a while?' },
+        ],
+        choices: [
+          {
+            label: '🌙 Spend the night together 🔞',
+            beats: (s) => [
+              N('No words are needed now. She draws you inside, and the evening unfolds the way it has before — tea first, then talk, then the shoji sliding closed and her kimono pooling at her feet.'),
+              N('She knows your body now, and you know hers — the places that make her gasp, the slow rhythm she loves. She arches beneath you in the lamplight, unhurried and unashamed, and afterward holds you close until the lamp gutters out. “The paddies can wait till dawn,” she murmurs, drowsy and sated.'),
+            ],
+            effects: [{ heal: 30 }, { exp: 15 }, { flag: ['lovday_hanae', 'TODAY'] }],
+          },
+          {
+            label: '💗 Just talk till late',
+            beats: (s) => [
+              N('You talk till the tea goes cold — of rice, of the dead, of small bright things. When you leave, she presses a rice cake into your hands.'),
+              { who: 'widow_hanae', text: 'Eat. You think too much on an empty stomach. …And come back soon. The futon is cold without you, but the evenings are warm.' },
+              A('idle'),
+            ],
+            effects: [{ exp: 10 }, { bond: 2 }, { flag: ['lovday_hanae', 'TODAY'] }],
+          },
+        ],
+      },
+    ],
+  },
+
+  // ---------------- SAKAI ----------------
+  merchant_yae: {
+    name: 'Yae of Sakai', archetype: 'merchant_woman', location: 'sakai', adult: true,
+    greet(s) {
+      return [
+        N('Behind a counter stacked with coin boxes, a woman in her late twenties tallies figures without looking up — then does, and smiles like a cat that owns the creamery.'),
+        { who: 'merchant_yae', text: `Another customer? No — something more interesting. An onmyoji. I am Yae, and everything in this shop is for sale… except me. ${karmaGreetExtra(s)} Though some things can be… negotiated.` },
+      ];
+    },
+    topics: [
+      {
+        id: 'trade', label: 'Talk business',
+        beats: (s) => [
+          { who: 'merchant_yae', text: 'Sakai runs on three things: coin, gossip, and other people\'s secrets. The Oda buy guns, the Hongan-ji buys rice, and everyone buys information — usually from me.' },
+          { who: 'merchant_yae', text: 'A word of trade wisdom, free of charge: never bargain when you are hungry, lonely, or in love. You will overpay every time.' },
+        ],
+      },
+      {
+        id: 'evening', label: '💗 Share sake after closing',
+        need: (s) => !s.world.flags.aff_yae,
+        beats: (s) => [
+          N('After the shutters close, Yae pours two cups of good sake and kicks her abacus aside. Business Yae melts away; what remains is simply a woman, tired and sharp and lonely in a city of coin-counters.'),
+          { who: 'merchant_yae', text: 'You know what no one buys from me? Company. Everyone wants my goods, my gossip, my gold — nobody wants Yae. …You are a strange one, onmyoji. I find I do not mind it.' },
+        ],
+        effects: [{ flag: ['aff_yae', 2] }, { exp: 25 }, { memory: ['merchant_yae', 'note', 'Shared sake after closing'] }],
+      },
+      {
+        id: 'night', label: '🌙 A merchant\'s private bargain 🔞',
+        need: (s) => (s.world.flags.aff_yae || 0) >= 2 && !s.world.flags.lover_yae,
+        beats: (s) => [
+          N('Yae locks the shop door, turns the sign to CLOSED, and leans back against the counter, arms folded. Her merchant\'s smile has softened into something far more dangerous.'),
+          { who: 'merchant_yae', text: 'Everything has a price, onmyoji — that is the law of Sakai. So here is my price, stated plainly: tonight, no coin. No bargaining. Just you, and me, and honesty. Do we have a deal?' },
+          H('Deal.'),
+          N('“Good,” she breathes, and crosses the room in three strides. Her kiss tastes of sake and ambition. She undresses with a merchant\'s efficiency and a lover\'s impatience, and pulls you down among the silk bolts in the back room, laughing breathlessly when the shelves rattle.'),
+          N('She is demanding and generous by turns — used to getting what she wants, and discovering, delighted, that what she wants is to give. Her nails trace your back as she moves above you, silk sliding against skin, until you both collapse laughing into the bolts of cloth, gloriously disheveled. “Best… trade… I ever made,” she pants.'),
+        ],
+        effects: [{ flag: ['lover_yae', true] }, { heal: 50 }, { exp: 60 }, { memory: ['merchant_yae', 'note', 'Lovers — spent the night together'] }],
+      },
+      {
+        id: 'lover', label: '🌅 Visit Yae',
+        need: (s) => s.world.flags.lover_yae && s.world.flags.lovday_yae !== dateKey(s),
+        beats: (s) => [
+          N('Yae spots you through the shop curtains and shoos her apprentice out with startling speed.'),
+          { who: 'merchant_yae', text: 'My favorite customer — the one who never pays and is worth every coin. The back room is free. …Or did you come to actually buy something? Disappointing, if so.' },
+        ],
+        choices: [
+          {
+            label: '🌙 Spend the night together 🔞',
+            beats: (s) => [
+              N('The sign flips to CLOSED with practiced speed. Among the silk bolts, Yae is every bit as bold as the first night — and now she knows exactly how to undo you, taking her time, savoring it, until the shop\'s rafters ring with her laughter and your name.'),
+            ],
+            effects: [{ heal: 30 }, { exp: 15 }, { flag: ['lovday_yae', 'TODAY'] }],
+          },
+          {
+            label: '💗 Just talk till late',
+            beats: (s) => [
+              N('You talk markets and war and nonsense till the candles drown. She rests her head on your shoulder, briefly unguarded.'),
+              { who: 'merchant_yae', text: 'Do not tell the guild. "Yae, soft." They would double my taxes out of spite.' },
+              A('idle'),
+            ],
+            effects: [{ exp: 10 }, { bond: 2 }, { flag: ['lovday_yae', 'TODAY'] }],
+          },
+        ],
+      },
+    ],
+  },
+
+  // ---------------- KYOTO ----------------
+  lady_tsubaki: {
+    name: 'Lady Tsubaki', archetype: 'noble_lady', location: 'kyoto', adult: true,
+    greet(s) {
+      return [
+        N('In a palace garden, a court lady in her early twenties in layered juni-hitoe robes pauses her fan mid-stroke. She regards you with open curiosity — rare in this court of masks.'),
+        { who: 'lady_tsubaki', text: `An onmyoji, in the flesh, and not one of the court's dusty old diviners. I am Tsubaki, lady-in-waiting. ${karmaGreetExtra(s)} Do speak — the court is starved of honest voices.` },
+      ];
+    },
+    topics: [
+      {
+        id: 'court', label: 'Court gossip',
+        beats: (s) => [
+          { who: 'lady_tsubaki', text: 'The gossip? The Minister of the Right is writing love poems to a married lady — badly. The Emperor\'s cat has taken to sleeping on state documents, which improves them.' },
+          { who: 'lady_tsubaki', text: 'And the warlords send gifts and veiled threats in equal measure. Nobunaga sent melons. One does not send melons without meaning something. Nobody knows what.' },
+        ],
+      },
+      {
+        id: 'evening', label: '💗 Exchange poems',
+        need: (s) => !s.world.flags.aff_tsubaki,
+        beats: (s) => [
+          N('You trade waka as the garden darkens — thirty-one syllables at a time, saying what cannot be said plainly. Her verses grow bolder with each exchange.'),
+          { who: 'lady_tsubaki', text: '“If only night / had no dawn to follow — / I would not grieve / the moon that sets, / but the hours we lose.” …There. I have shocked myself. Do not tell the other ladies. Or do — I am past caring what they think.' },
+        ],
+        effects: [{ flag: ['aff_tsubaki', 2] }, { exp: 25 }, { memory: ['lady_tsubaki', 'note', 'Exchanged waka poems in the garden'] }],
+      },
+      {
+        id: 'night', label: '🌙 A stolen night 🔞',
+        need: (s) => (s.world.flags.aff_tsubaki || 0) >= 2 && !s.world.flags.lover_tsubaki,
+        beats: (s) => [
+          N('A folded poem arrives at dusk: “The garden gate will be unbarred at the hour of the boar. Come alone. Burn this.” You burn it.'),
+          N('Tsubaki waits among the maples in a plain sleeping robe, all court artifice set aside — just a young woman, breathless, her composure cracking the moment she sees you. “If we are caught,” she whispers, “I am ruined. …Kiss me anyway.”'),
+          H('Then we will simply have to be worth the risk.'),
+          N('Her mouth is eager and unpracticed in the most endearing way, and her hands shake as she draws you down onto the moss. Layer by layer the court lady disappears, until there is only Tsubaki — flushed, gasping, clinging to you in the moonlight filtering through the maples, propriety abandoned entirely to pleasure.'),
+          N('After, she lies in the circle of your arms, robes hopelessly disordered, and laughs at the scandal of it. “The other ladies write poems about nights like this,” she murmurs. “I shall simply have lived one.”'),
+        ],
+        effects: [{ flag: ['lover_tsubaki', true] }, { heal: 50 }, { exp: 60 }, { memory: ['lady_tsubaki', 'note', 'Lovers — a stolen night in the palace garden'] }],
+      },
+      {
+        id: 'lover', label: '🌅 Visit Tsubaki',
+        need: (s) => s.world.flags.lover_tsubaki && s.world.flags.lovday_tsubaki !== dateKey(s),
+        beats: (s) => [
+          N('Tsubaki contrives to meet you by the garden pond, fan fluttering with suspicious innocence.'),
+          { who: 'lady_tsubaki', text: 'You are late. I have composed three poems about your lateness, each more cutting than the last. …I missed you. The poems are lies.' },
+        ],
+        choices: [
+          {
+            label: '🌙 A stolen night together 🔞',
+            beats: (s) => [
+              N('The garden gate, the hour of the boar, the maples. Tsubaki has grown bolder — she meets your kiss with practiced hunger now, and what follows among the shadows is unhurried and exquisite, two conspirators fluent at last in each other\'s pleasure.'),
+            ],
+            effects: [{ heal: 30 }, { exp: 15 }, { flag: ['lovday_tsubaki', 'TODAY'] }],
+          },
+          {
+            label: '💗 Just talk till late',
+            beats: (s) => [
+              N('You walk the garden paths, trading verses and gossip. For an hour the war does not exist.'),
+              { who: 'lady_tsubaki', text: 'When this is all over — the wars, the waiting — write me a poem that does not have to be burned.' },
+              A('idle'),
+            ],
+            effects: [{ exp: 10 }, { bond: 2 }, { flag: ['lovday_tsubaki', 'TODAY'] }],
+          },
+        ],
+      },
+    ],
+  },
+
+  dancer_koharu: {
+    name: 'Koharu the Dancer', archetype: 'dancer', location: 'kyoto', adult: true,
+    greet(s) {
+      return [
+        N('A shirabyoshi dancer in her early twenties practices steps in an empty courtyard, hand drum tapping. She spins, spots you, and bows with a performer\'s flourish.'),
+        { who: 'dancer_koharu', text: `An audience of one! How luxurious. I am Koharu — I dance for gods, warlords, and anyone with eyes. ${karmaGreetExtra(s)} Stay for a song?` },
+      ];
+    },
+    topics: [
+      {
+        id: 'dance', label: 'Watch her dance',
+        beats: (s) => [
+          N('Koharu dances — sleeves sweeping, drum keeping time, every step a prayer and a tease at once. For a few minutes the war, the spirits, the hunger all fall away.'),
+          { who: 'dancer_koharu', text: 'Did you feel it? That is what dance is for — reminding the body it is alive. You look like a man who needed reminding.' },
+        ],
+        effects: [{ heal: 15 }, { exp: 10 }],
+      },
+      {
+        id: 'evening', label: '💗 Walk her home after the show',
+        need: (s) => !s.world.flags.aff_koharu,
+        beats: (s) => [
+          N('After her last performance you walk Koharu home through lantern-lit streets. Offstage she is quieter — thoughtful, funny, tired in a way that has nothing to do with dancing.'),
+          { who: 'dancer_koharu', text: 'Everyone watches me dance. Nobody walks me home. …You are the first person in years to ask what *I* like. I like this. I like you, onmyoji. There — I said it. Dancers are supposed to be mysterious, so forget I did.' },
+        ],
+        effects: [{ flag: ['aff_koharu', 2] }, { exp: 25 }, { memory: ['dancer_koharu', 'note', 'Walked her home after the show'] }],
+      },
+      {
+        id: 'night', label: '🌙 A dance for two 🔞',
+        need: (s) => (s.world.flags.aff_koharu || 0) >= 2 && !s.world.flags.lover_koharu,
+        beats: (s) => [
+          N('Koharu meets you after the crowds have gone, still in her dancing robes, hair coming loose. She closes the door of her small room and turns to you with a look that is pure invitation.'),
+          { who: 'dancer_koharu', text: 'One audience. One dancer. …Dance with me? Not the steps — I will teach you those later. The other dance. The one with no audience at all.' },
+          N('She undresses the way she dances — slowly, deliberately, every movement a promise. Her body is strong and supple from years of training, and she uses all of it: leading, teasing, drawing you into a rhythm that needs no drum. When she finally takes you into her arms in earnest, it is with a dancer\'s total commitment — breathless, laughing, utterly alive.'),
+          N('After, she drums a soft beat on your chest with her fingertips. “Best performance of my life,” she whispers, “and no one will ever see it. Ours alone.”'),
+        ],
+        effects: [{ flag: ['lover_koharu', true] }, { heal: 50 }, { exp: 60 }, { memory: ['dancer_koharu', 'note', 'Lovers — a private dance for two'] }],
+      },
+      {
+        id: 'lover', label: '🌅 Visit Koharu',
+        need: (s) => s.world.flags.lover_koharu && s.world.flags.lovday_koharu !== dateKey(s),
+        beats: (s) => [
+          N('Koharu waves from the stage door, already half out of costume.'),
+          { who: 'dancer_koharu', text: 'My favorite audience! Front row, every time. …Come in. The drum is resting, but I am not.' },
+        ],
+        choices: [
+          {
+            label: '🌙 A private dance together 🔞',
+            beats: (s) => [
+              N('No performance this time — just the two of you, and Koharu\'s dancer\'s grace turned entirely to pleasure. She takes her time, savoring every moment, and the small room fills with soft laughter and softer sounds until you both lie tangled and spent among the discarded robes.'),
+            ],
+            effects: [{ heal: 30 }, { exp: 15 }, { flag: ['lovday_koharu', 'TODAY'] }],
+          },
+          {
+            label: '💗 Just talk till late',
+            beats: (s) => [
+              N('She teaches you a simple drum pattern; you are terrible at it; she laughs until she cries.'),
+              { who: 'dancer_koharu', text: 'The gods gave you spirit sight and took your rhythm as payment. A fair trade. Mostly.' },
+              A('idle'),
+            ],
+            effects: [{ exp: 10 }, { bond: 2 }, { flag: ['lovday_koharu', 'TODAY'] }],
+          },
+        ],
+      },
+    ],
+  },
+
+  // ---------------- AZUCHI ----------------
+  musha_ayame: {
+    name: 'Ayame the Onna-musha', archetype: 'onna_musha', location: 'azuchi', adult: true,
+    greet(s) {
+      return [
+        N('A woman warrior in her mid-twenties drills spear forms in the castle town\'s training ground, naginata whistling. She halts mid-cut and studies you with a soldier\'s frank appraisal.'),
+        { who: 'musha_ayame', text: `Onmyoji. I am Ayame — I held the gate at Anegawa with thirty others while the men decided what "honor" meant. ${karmaGreetExtra(s)} You look like you have seen battle. Talk to me of real things.` },
+      ];
+    },
+    topics: [
+      {
+        id: 'war', label: 'Talk of war',
+        beats: (s) => [
+          { who: 'musha_ayame', text: 'War is logistics wearing a drama mask. Spears, rice, roads. The Takeda win because their horses eat before their men do — remember that.' },
+          { who: 'musha_ayame', text: 'And if you ever face a so-called "honorable" duel — kick dust in his eyes first. Honor is for the living to debate afterward.' },
+        ],
+      },
+      {
+        id: 'evening', label: '💗 Spar at dusk',
+        need: (s) => !s.world.flags.aff_ayame,
+        beats: (s) => [
+          N('You spar till dusk — wooden blades, honest sweat. She wins twice, you win once, and afterward you share water and war stories as the training ground empties.'),
+          { who: 'musha_ayame', text: 'You fight like someone who has buried friends. …I like you, onmyoji. Men usually want me to be either a lady or a legend. You just hand me the water gourd. That is rarer than you think.' },
+        ],
+        effects: [{ flag: ['aff_ayame', 2] }, { exp: 40 }, { memory: ['musha_ayame', 'note', 'Sparred at dusk'] }],
+      },
+      {
+        id: 'night', label: '🌙 The warrior\'s rest 🔞',
+        need: (s) => (s.world.flags.aff_ayame || 0) >= 2 && !s.world.flags.lover_ayame,
+        beats: (s) => [
+          N('Ayame finds you after the evening drill, armor already half off, and states it with a soldier\'s directness: “My quarters. Tonight. No poetry, no bargaining — I want you, and I am tired of wanting quietly.”'),
+          H('No poetry. Just us.'),
+          N('Her quarters are spare — a futon, a sword stand, a single candle. She unbuckles her armor piece by piece, and beneath it she is all warmth and strength, calloused hands surprisingly gentle as they map your body like familiar terrain.'),
+          N('She takes you with a warrior\'s intensity and a woman\'s tenderness at once — fierce, honest, holding nothing back, her breath hot against your neck as she moves above you in the candlelight. After, she keeps her head on your shoulder and her hand on your heart, as if guarding it. “Best rest I have had in years,” she murmurs. “Do not tell the men. They would never let me hear the end of it.”'),
+        ],
+        effects: [{ flag: ['lover_ayame', true] }, { heal: 50 }, { exp: 60 }, { memory: ['musha_ayame', 'note', 'Lovers — the warrior\'s rest'] }],
+      },
+      {
+        id: 'lover', label: '🌅 Visit Ayame',
+        need: (s) => s.world.flags.lover_ayame && s.world.flags.lovday_ayame !== dateKey(s),
+        beats: (s) => [
+          N('Ayame grins when she sees you — a rare, unguarded thing — and jerks her head toward the barracks.'),
+          { who: 'musha_ayame', text: 'You. Me. Evening. …That is the whole invitation. I am a soldier, not a poet.' },
+        ],
+        choices: [
+          {
+            label: '🌙 Spend the night together 🔞',
+            beats: (s) => [
+              N('No poetry, as promised — just the two of you, and Ayame\'s fierce tenderness in the candlelight. She knows your body\'s old wounds and kisses each one like a general honoring fallen ground, until you both surrender gladly to sleep.'),
+            ],
+            effects: [{ heal: 30 }, { exp: 15 }, { flag: ['lovday_ayame', 'TODAY'] }],
+          },
+          {
+            label: '💗 Just talk till late',
+            beats: (s) => [
+              N('You oil blades and trade stories. She tells you about Anegawa — the parts that never make the songs.'),
+              { who: 'musha_ayame', text: 'You are good to talk to. Do not go getting yourself killed. That is an order.' },
+              A('idle'),
+            ],
+            effects: [{ exp: 10 }, { bond: 2 }, { flag: ['lovday_ayame', 'TODAY'] }],
+          },
+        ],
+      },
+    ],
+  },
+
+  // ---------------- GIFU ----------------
+  innkeep_okiku: {
+    name: 'Okiku the Innkeeper', archetype: 'innkeeper', location: 'gifu', adult: true,
+    greet(s) {
+      return [
+        N('A woman in her mid-thirties with a tenugui headcloth looks up from her ledger at the Gifu inn, and her professional smile warms into something genuine.'),
+        { who: 'innkeep_okiku', text: `Welcome, traveler. I am Okiku — I keep this inn as my mother did, and her mother before her. ${karmaGreetExtra(s)} Rooms are clean, the bath is hot, and the gossip is free.` },
+      ];
+    },
+    topics: [
+      {
+        id: 'inn', label: 'Ask about the inn',
+        beats: (s) => [
+          N('Okiku pours you tea while she talks — it tastes of roast barley and comfort.'),
+          { who: 'innkeep_okiku', text: 'An innkeeper learns everything: who is fleeing, who is hunting, who is lying about both. The Oda officers drink here — they tip well and talk loudly. If you ever need to know something… ask Okiku.' },
+        ],
+        effects: [{ heal: 15 }],
+      },
+      {
+        id: 'evening', label: '💗 Late-night tea',
+        need: (s) => !s.world.flags.aff_okiku,
+        beats: (s) => [
+          N('After the last guest retires, Okiku joins you for tea in the quiet common room. The innkeeper\'s mask slips; beneath it is a woman who has been widowed ten years and has not been truly seen in all of them.'),
+          { who: 'innkeep_okiku', text: 'Ten years I have poured tea for other people\'s stories. Tonight, for once, someone asked for mine. …You are kind, onmyoji. Kinder than this road usually allows.' },
+        ],
+        effects: [{ flag: ['aff_okiku', 2] }, { exp: 25 }, { memory: ['innkeep_okiku', 'note', 'Shared late-night tea'] }],
+      },
+      {
+        id: 'night', label: '🌙 The innkeeper\'s back room 🔞',
+        need: (s) => (s.world.flags.aff_okiku || 0) >= 2 && !s.world.flags.lover_okiku,
+        beats: (s) => [
+          N('Okiku banks the common-room fire, hangs the CLOSED sign, and takes your hand with the quiet certainty of a woman who has made up her mind. “My room is behind the kitchen,” she says softly. “Ten years, I have kept that door locked to everyone but grief. Tonight I am unlocking it for you.”'),
+          N('Her room is small and immaculate, smelling of lavender and clean linen. She undresses unhurriedly, without shyness — a woman in her prime, comfortable in her own skin — and draws you down onto the futon with a soft, certain strength.'),
+          N('She loves the way she keeps her inn: thoroughly, attentively, missing nothing. Her hands learn you completely — every scar, every sensitive place — and she gives herself with a generosity that leaves you breathless, sighing your name into the pillow so the guests will not hear. After, she holds you close in the lavender dark. “Stay till the kitchen fires are lit,” she whispers. “No one will know but us.”'),
+        ],
+        effects: [{ flag: ['lover_okiku', true] }, { heal: 50 }, { exp: 60 }, { memory: ['innkeep_okiku', 'note', 'Lovers — the innkeeper\'s back room'] }],
+      },
+      {
+        id: 'lover', label: '🌅 Visit Okiku',
+        need: (s) => s.world.flags.lover_okiku && s.world.flags.lovday_okiku !== dateKey(s),
+        beats: (s) => [
+          N('Okiku\'s eyes brighten when you enter, and she finds an excuse to touch your sleeve as she passes.'),
+          { who: 'innkeep_okiku', text: 'The back room is… available. The tea is also available. A woman can offer both, you know.' },
+        ],
+        choices: [
+          {
+            label: '🌙 Spend the night together 🔞',
+            beats: (s) => [
+              N('The CLOSED sign, the banked fire, the lavender-dark room. Okiku\'s lovemaking is unhurried and complete — she takes her time with you the way she does with everything she values, until you fall asleep to the sound of her heartbeat and wake to tea already poured.'),
+            ],
+            effects: [{ heal: 30 }, { exp: 15 }, { flag: ['lovday_okiku', 'TODAY'] }],
+          },
+          {
+            label: '💗 Just talk till late',
+            beats: (s) => [
+              N('You talk inn business and life while the candles burn down. She leans against your shoulder, content.'),
+              { who: 'innkeep_okiku', text: 'Whatever road you walk, onmyoji — this inn is your home on it. And I… am glad of your company. More than glad.' },
+              A('idle'),
+            ],
+            effects: [{ exp: 10 }, { bond: 2 }, { flag: ['lovday_okiku', 'TODAY'] }],
+          },
         ],
       },
     ],

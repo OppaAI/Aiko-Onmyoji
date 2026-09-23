@@ -3,8 +3,15 @@
 ## 1. High-level
 Turn-based web RPG (no build step; open `game/index.html`, or serve the
 folder). Free-roam map, bold moral choices, a teasing companion, and
-irreverent humor in an original historical sandbox. **All content is strictly
-non-explicit**; romance fades to black, never depicted.
+irreverent humor in an original historical sandbox.
+
+**Adult content policy:** 🔞 text content exists ONLY for explicitly-adult
+female NPCs (flagged `adult: true` in `js/dialogue.js`, ages stated in
+narration — all in their 20s–30s), and is always fully consensual. Portraits
+are non-explicit; the adult content lives in dialogue text only, behind 🔞
+topic labels. **Aiko is never a romantic or sexual subject** — she is
+young/minor-coded and stays strictly platonic, as do all minors and any
+ambiguous-age NPCs (e.g. miko_hana). No explicit imagery is generated.
 
 **Fantasy:** You are a wandering onmyōji in Sengoku Japan, starting in the
 6th month of 1570. Aiko, your bound shikigami, fights and snarks beside you.
