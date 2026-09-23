@@ -256,9 +256,10 @@ export function meleeAttack(S, world, hostileId, opts = {}) {
   // --- shikigami assist (attack orders) ---
   if (h.hp > 0 && S.world && S.world.shikigamiOrder === 'attack') {
     const sk = (S.world && S.world.shikigami) || [];
+    const selectedActor = sk.find((s) => s && s.summoned && s.id === S.world.shikigamiOrderActor);
     for (const s of sk) {
       if (!s || !s.summoned || s.aiko) continue;
-      if (S.world.shikigamiOrderActor && s.id !== S.world.shikigamiOrderActor) continue;
+      if (selectedActor && s.id !== selectedActor.id) continue;
       const sd = nonLethal ? Math.min(4, h.hp - 1) : 4;
       if (sd <= 0) break;
       h.hp -= sd;

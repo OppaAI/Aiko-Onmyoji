@@ -58,7 +58,10 @@ function findBoundShikigami(S, frag) {
   const f = norm(frag);
   const bound = S && S.world && Array.isArray(S.world.shikigami) ? S.world.shikigami : [];
   if (!f) return null;
-  return bound.find((g) => norm(g.id) === f || norm(g.name) === f) || null;
+  const exact = bound.find((g) => norm(g.id) === f || norm(g.name) === f);
+  if (exact) return exact;
+  const matches = bound.filter((g) => norm(g.name).includes(f));
+  return matches.length === 1 ? matches[0] : null;
 }
 
 const hasWord = (t, ...words) => words.some((w) => new RegExp(`\\b${w}\\b`).test(t));
