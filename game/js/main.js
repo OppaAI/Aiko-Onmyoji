@@ -29,6 +29,7 @@ let pendingAfterMove = null;
 let aikoMood = 'happy';
 let pendingQuestCombat = null; // enemyId from a topic/choice ef.combat effect
 let questCombat = null; // { c, enemyId } while a quest duel panel is open
+let commandGeneration = 0;
 
 // ---------------- boot ----------------
 function boot() {
@@ -226,6 +227,8 @@ async function runCommand() {
   // when the server handled the command (success or refusal) and false on
   // ANY failure (unreachable, timeout, bad JSON) — then we fall through to
   // the offline parser below. The command box never hard-fails.
+  const generation = ++commandGeneration;
+  const mapId = world.mapId;
   try {
     const handled = await AikoServer.act({
       text: t,
@@ -234,7 +237,9 @@ async function runCommand() {
       hooks: {
         present: collectPresent(world),
         party: collectParty(S),
-        route: (intent) => execIntent(intent, t),
+        route: (intent) => {
+          if (generation === commandGeneration && world && world.mapId === mapId) execIntent(intent, t);
+        },
         sys: (msg) => say('sys', msg),
         afterEffects: () => { updateHud(); St.saveGame(S); },
       },
@@ -290,11 +295,17 @@ function execIntent(it, raw) {
     case 'shikigamiAttack': {
       // "(tell|order) <who> to attack <target>" and the server's
       // aiko_command strike: same handler as the shikigami attack order.
-      const r = Party.setShikigamiOrder(S, 'attack');
+      const actor = Party.findShikigami(S, it.who || 'aiko');
+      if (!actor) {
+        say('sys', `No bound shikigami called "${it.who}" can take that order.`);
+        break;
+      }
+      const r = Party.setShikigamiOrder(S, 'attack', actor.id);
+      if (!r.ok) { say('sys', r.msg); break; }
       const h = it.target ? findHostileRef(it.target) : null;
-      if (h) { say('sys', `🦊 ${it.who || 'Aiko'} darts at ${h.name}!`); doMelee(h.id); break; }
+      if (h) { say('sys', `🦊 ${actor.name} darts at ${h.name}!`); doMelee(h.id); break; }
       const n = it.target ? findNpcRef(it.target) : null;
-      say('sys', n ? `🦊 ${it.who || 'Aiko'} lunges at ${n.rec.name}, claws flashing!` : r.msg);
+      say('sys', n ? `🦊 ${actor.name} lunges at ${n.rec.name}, claws flashing!` : r.msg);
       St.saveGame(S);
       break;
     }

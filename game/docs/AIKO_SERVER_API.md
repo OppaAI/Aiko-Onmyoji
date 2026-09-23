@@ -205,12 +205,12 @@ bind → shikigami binding (max 7 incl. Aiko), possess → Aiko possession, etc.
 | `{"type":"karma","delta":-30}` | player karma, clamped to −100…100 |
 | `{"type":"faction","faction":"oda","delta":-20}` | faction rep change (id must be a known faction, e.g. oda/tokugawa/court; unknown ids are ignored) |
 | `{"type":"mp","delta":-1}` | rei (spirit energy), clamped ≥ 0 |
-| `{"type":"hp","delta":-2}` | HP, clamped 0…maxHp |
+| `{"type":"hp","delta":-2}` | HP, clamped 1…maxHp |
 | `{"type":"bond","delta":0.02}` | Aiko bond, clamped 0…100 |
 | `{"type":"gold","delta":50}` | gold, clamped ≥ 0 |
 | `{"type":"item","item":"salt pouch","op":"give"\|"take"}` | inventory give/take |
 | `{"type":"consequence","note":"..."}` | appended to the game news/journal log |
-| `{"type":"flag","flag":"...","value":...}` | quest/world flag set |
+| `{"type":"flag","flag":"server_...","value":...}` | server-namespaced world flag set; relationship and prototype-related keys are rejected |
 
 Effects are applied deterministically by `applyServerEffects` (`js/aiko.js`).
 Unknown descriptor types are ignored, never applied.

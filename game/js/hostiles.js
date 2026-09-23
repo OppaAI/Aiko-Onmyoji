@@ -258,6 +258,7 @@ export function meleeAttack(S, world, hostileId, opts = {}) {
     const sk = (S.world && S.world.shikigami) || [];
     for (const s of sk) {
       if (!s || !s.summoned || s.aiko) continue;
+      if (S.world.shikigamiOrderActor && s.id !== S.world.shikigamiOrderActor) continue;
       const sd = nonLethal ? Math.min(4, h.hp - 1) : 4;
       if (sd <= 0) break;
       h.hp -= sd;

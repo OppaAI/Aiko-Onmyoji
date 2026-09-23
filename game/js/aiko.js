@@ -7,6 +7,7 @@ import {
   addKarma, addGold, addItem, removeItem, bondChange, setFlag, addNews,
 } from './state.js';
 import { serverUrl } from './aiko_link.js';
+import { kissAllowed, sexAllowed } from './actions.js';
 import { changeRep, factionDef, factionDisplayName, currentDaimyo, rankName } from './factions.js';
 import { locationName } from './map.js';
 
@@ -368,6 +369,17 @@ export function summarizeStateExtended(gameState, extra = {}) {
   };
 }
 
+const SERVER_FLAG_PREFIX = 'server_';
+
+function serverFlagAllowed(flag) {
+  if (typeof flag !== 'string') return false;
+  const key = flag.trim().toLowerCase();
+  if (!key.startsWith(SERVER_FLAG_PREFIX)) return false;
+  if (/(^|_)(lover|aff|coerced)(_|$)/.test(key)) return false;
+  if (/__proto__|(^|_)(prototype|constructor)(_|$)/.test(key)) return false;
+  return /^server_[a-z0-9_]+$/.test(key);
+}
+
 // Deterministic application of server-computed effect descriptors.
 // Returns human-readable notes (display is the caller's choice).
 export function applyServerEffects(s, effects) {
@@ -394,7 +406,7 @@ export function applyServerEffects(s, effects) {
         break;
       }
       case 'hp': {
-        s.player.hp = clamp(s.player.hp + (Number(ef.delta) || 0), 0, s.player.maxHp);
+        s.player.hp = clamp(s.player.hp + (Number(ef.delta) || 0), 1, s.player.maxHp);
         notes.push(`hp ${ef.delta > 0 ? '+' : ''}${ef.delta}`);
         break;
       }
@@ -425,7 +437,11 @@ export function applyServerEffects(s, effects) {
         break;
       }
       case 'flag': {
-        if (ef.flag) { setFlag(s, ef.flag, ef.value); notes.push(`flag ${ef.flag}`); }
+        if (serverFlagAllowed(ef.flag)) {
+          const key = ef.flag.trim().toLowerCase();
+          setFlag(s, key, ef.value);
+          notes.push(`flag ${key}`);
+        }
         break;
       }
       default: break; // unknown descriptors are ignored, never applied
@@ -499,6 +515,21 @@ export function mapFreeformIntent(intent) {
   }
 }
 
+function validateRelationshipIntent(local, gameState, present) {
+  const check = local && local.type === 'action' && local.action === 'kiss'
+    ? kissAllowed
+    : local && local.type === 'sex'
+      ? sexAllowed
+      : null;
+  if (!check) return true;
+  const targetId = String(local.target || '').toLowerCase();
+  const target = (Array.isArray(present) ? present : []).find(
+    (entity) => String(entity && entity.id || '').toLowerCase() === targetId,
+  );
+  if (!target) return 'That person is not here.';
+  return check(target, gameState);
+}
+
 export const AikoServer = {
   async generate({ gameState, speaker = 'aiko', history = [] }) {
     // Default template backend. A live server would receive:
@@ -559,6 +590,12 @@ export const AikoServer = {
         sys(data.narration || data.reason || 'The spirits decline to do that.');
         return true;
       }
+      const local = mapFreeformIntent(data.intent);
+      const validation = validateRelationshipIntent(local, gameState, hooks.present);
+      if (validation !== true) {
+        sys(typeof validation === 'string' ? validation : 'That is not allowed here.');
+        return true;
+      }
       let notes = [];
       try {
         notes = applyServerEffects(gameState, data.effects);
@@ -568,7 +605,6 @@ export const AikoServer = {
         sys('The spirits falter: ' + (err && err.message ? err.message : err));
       }
       if (data.narration) sys(data.narration);
-      const local = mapFreeformIntent(data.intent);
       if (local && typeof hooks.route === 'function') {
         try {
           hooks.route(local);

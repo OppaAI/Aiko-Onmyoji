@@ -54,6 +54,13 @@ function findNpc(nearby, frag) {
   );
 }
 
+function findBoundShikigami(S, frag) {
+  const f = norm(frag);
+  const bound = S && S.world && Array.isArray(S.world.shikigami) ? S.world.shikigami : [];
+  if (!f) return null;
+  return bound.find((g) => norm(g.id) === f || norm(g.name) === f) || null;
+}
+
 const hasWord = (t, ...words) => words.some((w) => new RegExp(`\\b${w}\\b`).test(t));
 
 // Building words: "enter the bar" enters the building instead of walking to it.
@@ -251,13 +258,18 @@ export function parseCommand(input, ctx = {}) {
   }
   m = t.match(/^(tell|order)\s+(.+?)\s+to\s+(attack|strike)\s+(.+)$/);
   if (m) {
+    const actorName = stripArticle(m[2]);
+    const actor = findBoundShikigami(ctx.S, actorName);
+    if (!actor) {
+      return { type: 'unknown', hint: `No bound shikigami called "${actorName}" can take that order.` };
+    }
     const name = stripArticle(m[4]);
     const npc = findNpc(nearby, name);
-    return { type: 'shikigamiAttack', who: stripArticle(m[2]), target: npc ? npc.id : name };
+    return { type: 'shikigamiAttack', who: actor.id, target: npc ? npc.id : name };
   }
-  m = t.match(/^turn\s+(.+?)\s+into\s+(my\s+)?shikigami$/)
-    || t.match(/^(?:recruit|enlist|hire)\s+(.+?)\s+as\s+(?:my\s+)?shikigami$/)
-    || t.match(/^make\s+(.+?)\s+(?:my\s+)?shikigami$/);
+  m = t.match(/^turn\s+(.+?)\s+into\s+(?:(?:my|a)\s+)?shikigami$/)
+    || t.match(/^(?:recruit|enlist|hire)\s+(.+?)\s+as\s+(?:(?:my|a)\s+)?shikigami$/)
+    || t.match(/^make\s+(.+?)\s+(?:(?:my|a)\s+)?shikigami$/);
   if (m) {
     const name = stripArticle(m[1]);
     const npc = findNpc(nearby, name);
