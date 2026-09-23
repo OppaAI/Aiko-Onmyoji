@@ -129,6 +129,14 @@ export function passiveBonus(s) {
   let atk = 0, def = 0;
   if (hasItem(s, 'iron_talisman')) atk += 2;
   if (hasItem(s, 'warding_cord')) def += 2;
+  // generic passive items: use:'passiveAtkN' / use:'passiveDefN'
+  for (const it of s.player.inventory || []) {
+    const defn = ITEMS[it.id];
+    if (defn && typeof defn.use === 'string') {
+      let m = /^passiveAtk(\d+)$/.exec(defn.use); if (m) atk += +m[1];
+      m = /^passiveDef(\d+)$/.exec(defn.use); if (m) def += +m[1];
+    }
+  }
   return { atk, def };
 }
 

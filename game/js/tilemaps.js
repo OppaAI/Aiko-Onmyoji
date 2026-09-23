@@ -8,9 +8,15 @@
 //
 // Legend: '.'=GRASS ','=SAND '~'=WATER 'T'=TREE 'o'=ROCK '#'=WALL '='=FLOOR
 //         'D'=DOOR '+'=ROAD '*'=FLOWER 'B'=BRIDGE ' '=VOID 'S'=STAIR
+//         'h'=HOUSE 'b'=BAR 'p'=BROTHEL 's'=SHOP 'i'=INN 'r'=SHRINE (buildings)
 // Walkable for the player: GRASS SAND FLOOR ROAD FLOWER BRIDGE STAIR
-//   (DOOR only when unlocked). Blocked: WATER TREE ROCK WALL VOID.
+//   (DOOR only when unlocked). Blocked: WATER TREE ROCK WALL VOID + buildings.
 // Aiko (spirit) ignores everything except VOID.
+//
+// Procedural maps: ids like "gen_forest_12" are generated on demand by
+// mapgen.js (see getMap). Hand-authored MAPS below are untouched.
+
+import * as MG from './mapgen.js';
 
 const W = 24, H = 18;
 
@@ -340,9 +346,33 @@ const FALLBACK = {
   lockedDoors: [],
 };
 
-/** Return the map for locId, or a fallback grass field. */
-export function getMap(locId) {
-  return MAPS[locId] || FALLBACK;
+// ---- runtime (procedurally generated) maps ----
+// Hand-authored MAPS above are static; infinite-world maps are generated on
+// demand by mapgen.js and cached here once visited, so bidirectional warp
+// links recorded in game state stay stable across visits.
+const runtimeMaps = new Map();
+
+/** Cache a generated map object under its id. */
+export function registerMap(id, map) {
+  runtimeMaps.set(String(id), map);
+}
+
+/** True for procedural map ids ("gen_<scene>_<n>"). */
+export function isGenId(id) {
+  return MG.isGenId(id);
+}
+
+/**
+ * Return the map for locId: a cached runtime map, a hand-authored map, a
+ * freshly generated procedural map (for gen_* ids), or a fallback field.
+ * `links` ({north:id, south:id, east:id, west:id}) overrides the generated
+ * warp targets on those edges — used to wire bidirectional links.
+ */
+export function getMap(locId, links) {
+  if (runtimeMaps.has(locId)) return runtimeMaps.get(locId);
+  if (MAPS[locId]) return MAPS[locId];
+  if (MG.isGenId(locId)) return MG.genMap(locId, links);
+  return FALLBACK;
 }
 
 /** Tile char at (x, y); out of bounds reads as VOID. */
@@ -354,8 +384,9 @@ export function tileAt(map, x, y) {
 }
 
 /**
- * True if (x, y) blocks movement. WATER/TREE/ROCK/WALL/VOID always block the
- * player. A DOOR blocks unless its per-tile flag ('door_open_<x>_<y>') or its
+ * True if (x, y) blocks movement. WATER/TREE/ROCK/WALL/VOID and building
+ * tiles (HOUSE/BAR/BROTHEL/SHOP/INN/SHRINE) always block the player.
+ * A DOOR blocks unless its per-tile flag ('door_open_<x>_<y>') or its
  * lockedDoors entry flag is set in S.world.flags. A spirit (Aiko) ignores
  * everything except VOID. S is only consulted for door flags.
  */
@@ -370,7 +401,8 @@ export function isBlocked(map, x, y, S = null, spirit = false) {
     if (ld && flags[ld.flag]) return false;
     return true;
   }
-  return t === '~' || t === 'T' || t === 'o' || t === '#';
+  return t === '~' || t === 'T' || t === 'o' || t === '#' ||
+    t === 'h' || t === 'b' || t === 'p' || t === 's' || t === 'i' || t === 'r';
 }
 
 const DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1]];

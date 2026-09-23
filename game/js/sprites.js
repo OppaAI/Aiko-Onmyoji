@@ -120,6 +120,41 @@ export function demonSpec(seedStr) {
   return monoSpec(seedStr, base, 'demon', { weapon: 0 });
 }
 
+const ANIMAL_KINDS = new Set(['deer', 'rabbit', 'bird', 'dog', 'monkey', 'boar', 'wolf']);
+const ANIMAL_COLORS = {
+  deer: '#a5764a', rabbit: '#d9d2c2', bird: '#5a7a9a', dog: '#8a6a42',
+  monkey: '#7a5a3e', boar: '#5a4a3a', wolf: '#6a6a72',
+};
+
+/**
+ * Small animal spec (kind:'animal'). Drawn in drawSprite as a side-view
+ * quadruped (bird drawn small with wings). `animal` names the species.
+ */
+export function animalSpec(kind) {
+  const k = ANIMAL_KINDS.has(kind) ? kind : 'dog';
+  const body = ANIMAL_COLORS[k];
+  return {
+    kind: 'animal', animal: k, gender: 'm',
+    skin: body, hairStyle: 4, hairColor: shade(body, 0.7),
+    top: 4, topColor: body, botColor: shade(body, 0.85),
+    hat: 0, weapon: 0, blush: false, seed: 'animal:' + k,
+  };
+}
+
+/**
+ * Floating wisp spec (kind:'wisp'). Drawn in drawSprite as a glowing
+ * flame-like blob; `color` tints it.
+ */
+export function wispSpec(color) {
+  const c = validColor(color, '#7ad9e8');
+  return {
+    kind: 'wisp', color: c, gender: 'm',
+    skin: c, hairStyle: 4, hairColor: c,
+    top: 1, topColor: c, botColor: shade(c, 0.85),
+    hat: 0, weapon: 0, blush: false, alpha: 0.85, seed: 'wisp',
+  };
+}
+
 /** Aiko: fixed small fox-girl spec. */
 export function aikoSpec() {
   return {
@@ -143,7 +178,7 @@ export function playerSpec() {
 // ---------------------------------------------------------------------------
 // NPC archetype -> spec
 
-const FEMALE_ARCH = new Set(['princess', 'noble_lady', 'dancer', 'merchant_woman', 'villager_woman', 'onna_musha', 'innkeeper', 'miko']);
+const FEMALE_ARCH = new Set(['princess', 'noble_lady', 'dancer', 'merchant_woman', 'villager_woman', 'onna_musha', 'innkeeper', 'miko', 'courtesan']);
 
 export function npcSpec(npcId, npc = {}) {
   const id = String(npcId || 'npc');
@@ -185,6 +220,16 @@ export function npcSpec(npcId, npc = {}) {
       return humanSpec(seed, Object.assign(base, { top: 1, topColor: '#3a3a4a', hat: 1, hairStyle: 1 }));
     case 'elder': // plain robe + staff
       return humanSpec(seed, Object.assign(base, { top: 1, topColor: '#8a8a8a', weapon: 3, hairStyle: 4, hairColor: '#d9d2c2' }));
+    case 'ninja': // dark hood + katana
+      return humanSpec(seed, Object.assign(base, { top: 4, topColor: '#2a2a35', botColor: '#1f1f28', hairStyle: 1, hairColor: '#26221f', weapon: 1, blush: false }));
+    case 'soldier': // armor + spear
+      return humanSpec(seed, Object.assign(base, { top: 2, topColor: '#5a5a6a', botColor: '#3a3a48', weapon: 2, hairStyle: 1, hairColor: '#26221f' }));
+    case 'bandit': // ragged + katana + straw hat
+      return humanSpec(seed, Object.assign(base, { top: 4, topColor: '#6a5a48', botColor: '#4a3e30', weapon: 1, hat: 2, hairStyle: 1 }));
+    case 'courtesan': // fancy dress, bright colors
+      return humanSpec(seed, Object.assign(base, { top: 3, topColor: '#d46a9a', botColor: '#7a2e6a', hairStyle: 2, hairColor: '#26221f', blush: true }));
+    case 'demon_brute': // hulking demon
+      return demonSpec(seed);
     default:
       return humanSpec(seed, base);
   }
@@ -193,7 +238,7 @@ export function npcSpec(npcId, npc = {}) {
 // ---------------------------------------------------------------------------
 // Defensive spec sanitizer — bad spec falls back to a plain human.
 
-const KINDS = new Set(['human', 'ghost', 'demon', 'aiko', 'kappa']);
+const KINDS = new Set(['human', 'ghost', 'demon', 'aiko', 'kappa', 'animal', 'wisp']);
 
 function sanitize(spec) {
   const dflt = humanSpec('fallback');
@@ -249,6 +294,68 @@ export function drawSprite(ctx, spec, px, py, o = {}) {
     const rect = (x0, y0, w, h, c) => {
       for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) plot(x0 + x, y0 + y, c);
     };
+
+    // ---- animal / wisp kinds: simple side-view critter or glowing blob ----
+    if (spec.kind === 'animal' || spec.kind === 'wisp') {
+      const bobY = pose === 'walk' ? (frame ? 0 : -1) : 0;
+      if (spec.kind === 'wisp') {
+        const col = validColor(spec.color, '#7ad9e8');
+        rect(3, 7 + bobY, 6, 8, shade(col, 0.7));
+        rect(4, 5 + bobY, 4, 9, col);
+        rect(5, 4 + bobY, 2, 4, '#ffffff');
+        plot(5, 8 + bobY, '#ffffff'); plot(6, 10 + bobY, shade(col, 1.3));
+        plot(2, 6 + bobY, col); plot(9, 12 + bobY, col); // stray sparks
+        return;
+      }
+      const a = spec.animal || 'dog';
+      const body = validColor(spec.skin, '#8a6a42');
+      const dark = shade(body, 0.78), light = shade(body, 1.18);
+      const eye = '#26221f';
+      if (a === 'bird') {
+        rect(4, 11 + bobY, 5, 3, body);            // body
+        rect(3, 10 + bobY, 6, 2, dark);            // wing
+        rect(8, 8 + bobY, 3, 4, body);            // head
+        plot(11, 9 + bobY, '#e8a23a');            // beak
+        plot(9, 9 + bobY, eye);
+        rect(5, 14 + bobY, 1, 3, dark); rect(7, 14 + bobY, 1, 3, dark); // thin legs
+        plot(2, 11 + bobY, dark); plot(1, 10 + bobY, dark); // tail
+      } else {
+        const tall = a === 'deer' || a === 'wolf';
+        const by = (tall ? 9 : 10) + bobY;
+        rect(3, 14 + bobY, 2, 4, dark); rect(7, 14 + bobY, 2, 4, dark); // legs
+        rect(2, by, 8, 5, body); rect(2, by, 8, 1, light); // body + back highlight
+        rect(9, by - 2, 4, 4, body);              // head
+        rect(10, by - 1, 2, 2, light);           // muzzle
+        plot(10, by - 1, eye);
+        if (a === 'deer') {
+          plot(9, by - 4, dark); plot(8, by - 5, dark); plot(10, by - 5, dark);
+          plot(11, by - 4, dark); plot(12, by - 5, dark); // antlers
+          plot(1, by + 2, light);                  // tail
+        } else if (a === 'rabbit') {
+          rect(9, by - 5, 2, 3, body);            // long ears
+          plot(9, by - 5, '#f2a0a8');
+          rect(10, by - 4, 1, 2, light);
+          plot(1, by + 3, '#ffffff');             // puff tail
+        } else if (a === 'dog') {
+          rect(9, by - 3, 2, 2, dark);            // floppy ear
+          plot(1, by + 1, dark); plot(0, by, dark); // tail
+        } else if (a === 'wolf') {
+          rect(9, by - 4, 2, 2, dark); rect(11, by - 4, 2, 2, dark); // pricked ears
+          rect(0, by + 1, 2, 3, dark);            // bushy tail
+          plot(10, by, '#c9a227');                // amber eye
+        } else if (a === 'boar') {
+          rect(2, by - 1, 8, 1, dark);            // bristles
+          plot(12, by, '#f5f0e6');                // tusk
+          rect(9, by - 3, 2, 1, dark);            // ears
+        } else if (a === 'monkey') {
+          rect(10, by - 1, 2, 2, light);          // face patch
+          plot(10, by, eye);
+          plot(1, by + 4, dark); plot(0, by + 3, dark); plot(0, by + 2, dark); // curled tail
+          rect(9, by - 3, 1, 1, dark);            // ear
+        }
+      }
+      return;
+    }
 
     const skin = spec.skin, skinD = shade(skin, 0.85);
     const hairC = spec.hairColor, hairD = shade(hairC, 0.75);
@@ -542,6 +649,7 @@ export function drawAikoFace(ctx, x, y, size, mood = 'happy') {
 export const T = {
   GRASS: 0, WATER: 1, TREE: 2, ROCK: 3, WALL: 4, FLOOR: 5, DOOR: 6,
   ROAD: 7, FLOWER: 8, SAND: 9, BRIDGE: 10, VOID: 11, STAIR: 12,
+  HOUSE: 13, BAR: 14, BROTHEL: 15, SHOP: 16, INN: 17, SHRINEH: 18,
 };
 
 const TILE_IDS = new Set(Object.values(T));
@@ -640,6 +748,45 @@ export function drawTile(ctx, t, px, py, size, variant = 0) {
           R(0, i * 4 + 1, 16, 3, '#7a7a82');
         }
         break;
+      case T.HOUSE: case T.BAR: case T.BROTHEL: case T.SHOP: case T.INN: case T.SHRINEH: {
+        grassBase();
+        // roof color varies by variant: 0 thatch, 1 dark tile, 2 plaster white
+        const roofs = ['#a5825a', '#3a3a4a', '#e8e0d0'];
+        let roof = roofs[v % 3], roofD = shade(roofs[v % 3], 0.72);
+        if (t === T.SHRINEH) { roof = '#2e2e3a'; roofD = '#1e1e28'; }
+        // roof
+        R(4, 1, 8, 2, shade(roof, 1.15));
+        R(2, 3, 12, 2, roof);
+        R(0, 5, 16, 2, roofD);
+        R(0, 5, 16, 1, shade(roof, 1.2)); // ridge highlight
+        // walls
+        const wallC = t === T.SHRINEH ? '#b03a2e' : '#d9cbb0';
+        R(2, 7, 12, 7, wallC);
+        R(2, 7, 12, 1, shade(wallC, 0.85));
+        // timber frame
+        R(2, 7, 1, 7, '#6a4f2e'); R(13, 7, 1, 7, '#6a4f2e'); R(7, 7, 2, 7, '#6a4f2e');
+        R(2, 7, 12, 1, '#6a4f2e');
+        // door
+        R(4, 10, 3, 4, '#5a4226'); R(4, 10, 3, 1, '#6a5232');
+        if (t === T.BAR) {
+          R(13, 8, 2, 3, '#d43a2e'); R(13, 8, 2, 1, '#f0665a'); // red lantern
+          R(8, 8, 6, 2, '#2e5a8a'); R(10, 8, 1, 2, '#d9cbb0'); R(12, 8, 1, 2, '#d9cbb0'); // noren
+        } else if (t === T.BROTHEL) {
+          R(1, 8, 2, 3, '#e87aa0'); R(13, 8, 2, 3, '#e87aa0'); // pink lanterns
+          R(1, 8, 2, 1, '#f5a8c0'); R(13, 8, 2, 1, '#f5a8c0');
+          R(8, 10, 3, 4, '#7a2e4a'); // lacquered door
+        } else if (t === T.SHOP) {
+          for (let i = 0; i < 6; i++) R(2 + i * 2, 7, 2, 2, i % 2 ? '#f5f0e6' : '#b03a2e'); // striped awning
+          R(2, 9, 12, 1, '#6a4f2e');
+        } else if (t === T.INN) {
+          R(8, 8, 6, 2, '#2e5a8a'); R(10, 8, 2, 2, '#f5f0e6'); // blue noren with crest
+        } else if (t === T.SHRINEH) {
+          R(2, 7, 2, 7, '#8a2e22'); R(12, 7, 2, 7, '#8a2e22'); // red pillars
+          R(5, 14, 6, 2, '#8a8a92'); // stone steps
+          R(7, 9, 2, 2, '#c9a227'); // offering-box glint
+        }
+        break;
+      }
       case T.VOID:
       default:
         R(0, 0, 16, 16, '#0e0e1e');

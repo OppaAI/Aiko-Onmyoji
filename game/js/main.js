@@ -9,6 +9,12 @@ import * as Chat from './chat.js';
 import * as Act from './actions.js';
 import * as Quests from './quests.js';
 import { World, TILE_PX } from './engine.js';
+import * as MG from './mapgen.js';
+import * as Places from './places.js';
+import * as Missions from './missions.js';
+import * as Hostiles from './hostiles.js';
+import * as Party from './party.js';
+import * as Combat from './combat.js';
 
 const $ = (id) => document.getElementById(id);
 const esc = (t) => String(t).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -47,17 +53,52 @@ function showTitle(cv) {
 }
 function startGame(fresh) {
   closePanel();
+  Places.ensureState(S); Missions.ensureState(S); Hostiles.ensureState(S); Party.ensureState(S);
+  S.world.genLinks = S.world.genLinks || {};
   world = new World($('stage'), S, {
     toast, onWarp: doWarp, onBumpDoor: doorBump,
-    onChoreoBeat: choreoBeatPanel,
+    onChoreoBeat: choreoBeatPanel, onPlayerDeath: (info) => playerDeath(info),
   });
-  world.loadLocation(S.player.location || 'azuchi');
+  loadLocationEx(S.player.location || 'kyoto');
   drawAikoFace();
   say('sys', fresh ? 'A new journey begins. Aiko stretches her tails. "Let\'s go, master!"' : `Welcome back. You stand in ${world.map.name}.`);
   aikoSay(brain.respond('hello', brainCtx()).text, 'happy');
   loop(0);
   updateHud();
   buildQuickActions();
+}
+// ---- procedural-map + population plumbing -------------------------------
+// Loads a location, recording bidirectional links for generated maps so the
+// way back stays stable, then populates party/shikigami/animals/hostiles.
+function loadLocationEx(locId, fromId, fromDir) {
+  if (fromId && fromDir && MG.isGenId(locId)) {
+    const opp = { north: 'south', south: 'north', east: 'west', west: 'east' }[fromDir];
+    const L = S.world.genLinks[locId] || (S.world.genLinks[locId] = {});
+    if (opp && !L[opp]) L[opp] = fromId;
+  }
+  if (MG.isGenId(locId)) TM.registerMap(locId, MG.genMap(locId, S.world.genLinks[locId] || {}));
+  world.loadLocation(locId);
+  Party.loadFollowers(world, S);
+  Party.spawnAnimals(world, S);
+  Hostiles.spawnForMap(world, S);
+}
+function dirFromWarp(w) {
+  if (w.x === 0) return 'west';
+  if (w.x === 23) return 'east';
+  if (w.y === 0) return 'north';
+  if (w.y === 17) return 'south';
+  return null;
+}
+let _dead = false;
+function playerDeath(info) {
+  if (_dead) return; _dead = true;
+  const lost = Combat.defeatPenalty(S);
+  say('sys', `💀 You fall${info && info.src ? ' — ' + info.src : ''}! Aiko gathers your spirit and flees to the Forest Shrine… (−${lost} gold)`);
+  aikoSay('No no no! Stay with me! …There. Breathe. The shrine will mend you. Don\'t ever scare me like that again!', 'sad');
+  setTimeout(() => {
+    loadLocationEx('shrine');
+    _dead = false; updateHud(); St.saveGame(S);
+  }, 1800);
 }
 let lastT = 0;
 function loop(t) {
@@ -187,8 +228,45 @@ function execIntent(it, raw) {
       if (w) doWarp(w); else toast('No road there from here.');
       break;
     }
-    case 'action': doQuickAction(it.action, findNpcRef(it.target)); break;
+    case 'action': {
+      if (it.action === 'fight') {
+        const h = findHostileRef(it.target);
+        if (h) { doMelee(h.id); break; }
+      }
+      doQuickAction(it.action, findNpcRef(it.target)); break;
+    }
     case 'sex': doSexIntent(findNpcRef(it.target), it.template, it.force); break;
+    case 'recruit': doRecruit(it.target); break;
+    case 'dismiss': doDismiss(it); break;
+    case 'party': say('sys', Party.partyList(S)); break;
+    case 'bind': doBind(it.target); break;
+    case 'release': {
+      const r = Party.releaseShikigami(S, it.target);
+      say('sys', r.msg);
+      if (r.ok) { Party.loadFollowers(world, S); St.saveGame(S); }
+      break;
+    }
+    case 'shikigami':
+      if (it.sub === 'list') say('sys', Party.shikigamiList(S));
+      else { const r = Party.setShikigamiOrder(S, it.order); Party.loadFollowers(world, S); toast(r.msg); St.saveGame(S); }
+      break;
+    case 'summon': {
+      const r = Party.summonShikigami(S, it.target);
+      say('sys', r.msg);
+      if (r.ok) { Party.loadFollowers(world, S); St.saveGame(S); }
+      break;
+    }
+    case 'enter': doEnter(it.target); break;
+    case 'exit': doExit(); break;
+    case 'missions': say('sys', Missions.missionLog(S).join(' · ') || 'No commissions. Visit a bar\'s mission board.'); break;
+    case 'mission':
+      if (it.sub === 'accept') doAcceptMission(it.n);
+      else doAbandonMission(it.target);
+      break;
+    case 'capture': doCapture(it.target); break;
+    case 'shop': doShop(it.sub, it.item); break;
+    case 'travel': doTravel(it.dir); break;
+    case 'request': doRequest(it.target); break;
     case 'aiko': doAiko(it.sub, it.target); break;
     case 'door': {
       const d = (world.map.lockedDoors || []).find(x => Math.abs(x.x - world.player.x) + Math.abs(x.y - world.player.y) <= 3);
@@ -201,10 +279,254 @@ function execIntent(it, raw) {
       say('sys', `${S.player.name} — Lv${S.player.level} ❤️${S.player.hp}/${S.player.maxHp} 🪙${S.player.gold} ⚖️${St.karmaTier(S.player.karma)} 📍${world.map.name} 📅${St.dateLabel(S)}`);
       break;
     case 'help':
-      say('sys', 'Commands: go north/south/east/west · talk to <name> · kiss <name> · shake hands · attack <name> · sleep with <name> · aiko fly/land/hide · possess <name> · release · open door · go to <place> · where am i');
+      say('sys', 'Commands: go north/south/east/west · travel north (new lands) · talk to <name> · kiss <name> · attack <name> · recruit <name> · bind <name> (shikigami, max 7) · shikigami / summon <name> / shikigami attack · enter the bar/shop/inn · missions · accept mission <n> · buy/sell <item> · aiko fly/land/hide · possess <name> · release · where am i');
       break;
     default: say('sys', it.hint || "Hmm? Try 'help'.");
   }
+}
+// ---------------- new systems: party / shikigami / hostiles / places ----
+function findHostileRef(target) {
+  if (!target) return world.nearestHostile ? world.nearestHostile(3) : null;
+  const low = String(target).toLowerCase();
+  return (world.hostiles || []).find(h => h.id.toLowerCase().includes(low) || h.name.toLowerCase().includes(low)) || null;
+}
+function doMelee(hostileId) {
+  const r = Hostiles.meleeAttack(S, world, hostileId, {
+    onKill: (h, lines) => {
+      if (h.missionId) {
+        const m = Missions.onTargetDown(S, h, 'killed');
+        lines.push(...m.lines);
+        if (m.done) toast('🎯 Objective complete! Return to collect your reward.');
+      }
+    },
+    onPlayerDown: () => playerDeath({ src: 'your wounds' }),
+  });
+  for (const l of r.lines || []) say('sys', l);
+  updateHud(); St.saveGame(S);
+}
+function doRecruit(target) {
+  const n = findNpcRef(target);
+  if (!n) {
+    const h = findHostileRef(target);
+    say('sys', h ? `${h.name} is wild with battle-rage — bind them as a shikigami ("bind ${target}") instead of recruiting.` : `Recruit whom? Nobody called "${target}" is here.`);
+    return;
+  }
+  walkAdjacent(n, () => {
+    const r = Party.recruit(S, world, n);
+    say('sys', r.msg);
+    if (r.ok) { Party.loadFollowers(world, S); updateHud(); St.saveGame(S); lastEvent = 'recruited ' + n.rec.name; }
+  });
+}
+function doDismiss(it) {
+  if (it.all) {
+    const n = (S.world.party || []).length;
+    S.world.party = []; Party.loadFollowers(world, S);
+    say('sys', n ? 'You disband your party. They go their separate ways.' : 'No party to disband.');
+    St.saveGame(S); return;
+  }
+  const t = it.target || '';
+  const pr = Party.dismissParty(S, world, t);
+  if (pr.ok) { Party.loadFollowers(world, S); say('sys', pr.msg); St.saveGame(S); return; }
+  const ur = Party.unsummonShikigami(S, t);
+  say('sys', ur.ok ? ur.msg : pr.msg);
+  if (ur.ok) { Party.loadFollowers(world, S); St.saveGame(S); }
+}
+function findBindTarget(target) {
+  const low = String(target || '').toLowerCase();
+  const n = findNpcRef(target);
+  if (n) return { id: n.id, name: n.rec.name, rec: n.rec, kind: 'npc' };
+  const h = (world.hostiles || []).find(x => x.id.toLowerCase().includes(low) || x.name.toLowerCase().includes(low));
+  if (h) return { id: h.id, name: h.name, kind: 'hostile', hostile: h };
+  const a = (world.animals || []).find(x => x.id.toLowerCase().includes(low) || x.name.toLowerCase().includes(low));
+  if (a) return { id: a.id, name: a.name, kind: 'animal', animal: a.animal };
+  const p = (world.party || []).find(x => x.id.toLowerCase().includes(low) || x.name.toLowerCase().includes(low));
+  if (p) return { id: p.mid || p.id, name: p.name, rec: { archetype: 'villager' }, kind: 'npc' };
+  return null;
+}
+function doBind(target) {
+  const t = findBindTarget(target);
+  if (!t) { say('sys', `Bind whom? Nothing called "${target}" is near.`); return; }
+  const r = Party.bindShikigami(S, world, t);
+  say('sys', r.msg);
+  if (r.ok) { Party.loadFollowers(world, S); updateHud(); St.saveGame(S); lastEvent = 'bound ' + t.name; }
+}
+const KIND_WORDS = { bar: 'bar', tavern: 'bar', pub: 'bar', brothel: 'brothel', shop: 'shop', store: 'shop', smith: 'weaponsmith', weaponsmith: 'weaponsmith', inn: 'inn', shrine: 'shrine', house: 'house' };
+function doEnter(target) {
+  const w = String(target || '').toLowerCase().split(/\s+/).find(x => KIND_WORDS[x]);
+  const kind = w ? KIND_WORDS[w] : null;
+  const f = Places.findNearestBuilding(world, world.player.x, world.player.y, kind, 5);
+  if (!f) { toast(kind ? `No ${kind} nearby — walk closer.` : 'Enter what? Try "enter the bar".'); return; }
+  const iid = Places.enterBuilding(S, world, f.bldg);
+  St.saveGame(S);
+  loadLocationEx(iid);
+  updateHud();
+  openBuildingMenu(f.bldg);
+  lastEvent = 'entered ' + f.bldg.name;
+}
+function doExit() {
+  if (/__in__/.test(world.mapId)) {
+    const w = (world.map.warps || [])[0];
+    if (w) { doWarp(w); return; }
+  }
+  toast('You are already outside.');
+}
+function doTravel(dir) {
+  const dn = { up: 'north', down: 'south', left: 'west', right: 'east' }[dir] || dir;
+  const nid = MG.neighborFor(world.mapId, dn);
+  say('sys', `🧭 You travel ${dn}, beyond the known roads…`);
+  loadLocationEx(nid, world.mapId, dn);
+  St.discover(S, nid);
+  updateHud(); St.saveGame(S);
+  lastEvent = 'traveled to ' + world.map.name;
+  aikoSay(brain.respond(`we arrived at ${world.map.name}`, brainCtx()).text, 'happy');
+}
+function doAcceptMission(n) {
+  const f = Places.findNearestBuilding(world, world.player.x, world.player.y, 'bar', 6);
+  if (!f) { toast('You need to stand in a bar to take commissions.'); return; }
+  const r = Missions.acceptMission(S, f.bldg.id, (n || 1) - 1);
+  say('sys', r.msg);
+  if (r.ok && r.target) say('sys', `🎯 Target: ${r.target.name} — seek them in ${r.target.mapId}.`);
+  St.saveGame(S); updateHud();
+}
+function doAbandonMission(target) {
+  const act = Missions.activeMissions(S);
+  const t = String(target || '').trim().toLowerCase();
+  const m = /^\d+$/.test(t) ? act[+t - 1] : act.find(x => x.id.toLowerCase().includes(t) || x.title.toLowerCase().includes(t));
+  if (!m) { say('sys', 'Abandon which commission? See "missions".'); return; }
+  const r = Missions.abandonMission(S, m.id);
+  say('sys', r.msg || 'Commission abandoned.');
+  St.saveGame(S);
+}
+function doCapture(target) {
+  const h = findHostileRef(target);
+  if (!h) { say('sys', `Capture whom? Nobody called "${target}" is here.`); return; }
+  const r = Hostiles.captureTarget(S, world, h.id, {
+    onCapture: (hh, lines) => {
+      if (hh.missionId) {
+        const m = Missions.onTargetDown(S, hh, 'captured');
+        lines.push(...m.lines);
+        if (m.done) toast('🎯 Objective complete! Return to collect your reward.');
+      }
+    },
+  });
+  for (const l of r.lines || []) say('sys', l);
+  if (!r.ok && r.msg) say('sys', r.msg);
+  St.saveGame(S); updateHud();
+}
+function itemIdFromName(frag) {
+  const f = String(frag || '').toLowerCase().trim();
+  const ids = Object.keys(St.ITEMS);
+  return ids.find(id => id === f)
+    || ids.find(id => St.ITEMS[id].name.toLowerCase() === f)
+    || ids.find(id => St.ITEMS[id].name.toLowerCase().includes(f))
+    || null;
+}
+function doShop(sub, item) {
+  const f = Places.findNearestBuilding(world, world.player.x, world.player.y, null, 6);
+  const kind = f && (f.bldg.kind === 'weaponsmith' || f.bldg.kind === 'shop') ? f.bldg.kind : null;
+  if (!kind) { toast('No shop nearby — find a shop or weaponsmith.'); return; }
+  if (sub === 'list' || !sub) {
+    const lines = Places.shopList(S, kind, f.bldg.id).map(o => `${o.name} — ${o.price}g${o.owned ? ` (own ${o.owned})` : ''}`);
+    say('sys', '🏪 ' + (lines.join(' · ') || 'Sold out.'));
+    return;
+  }
+  const id = itemIdFromName(item);
+  if (!id) { say('sys', `The shopkeep squints. "Never heard of ${item}."`); return; }
+  const r = sub === 'buy' ? Places.buyItem(S, id) : Places.sellItem(S, id);
+  say('sys', r.msg);
+  updateHud(); St.saveGame(S);
+}
+function doRequest(target) {
+  const n = findNpcRef(target) || world.nearestNpc(3);
+  if (!n) { say('sys', 'Ask whom for work? No one nearby.'); return; }
+  const offer = Missions.npcOffer(n.id, S);
+  if (!offer) { say('sys', `${n.rec.name} has no work for you right now.`); return; }
+  openPanel(`<button class="close-x" id="p-x">✕</button><h3>❗ ${esc(n.rec.name)}'s request</h3>
+    <p><b>${esc(offer.title)}</b></p><p>${esc(offer.desc)}</p>
+    <p><small>Reward: ${offer.reward.gold} gold${offer.reward.karma ? ` · karma ${offer.reward.karma > 0 ? '+' : ''}${offer.reward.karma}` : ''}</small></p>
+    <div class="btn-row"><button id="rq-ok">Accept</button><button id="rq-no">Decline</button></div>`);
+  $('p-x').onclick = closePanel;
+  $('rq-no').onclick = closePanel;
+  $('rq-ok').onclick = () => { const r = Missions.acceptNpcOffer(S, n.id); say('sys', r.msg); if (r.ok && r.target) say('sys', `🎯 Target: ${r.target.name} — seek them in ${r.target.mapId}.`); closePanel(); St.saveGame(S); };
+}
+// ---------------- building menus ----------------
+function openBuildingMenu(bldg) {
+  const menu = Places.buildingMenu(S, world, bldg);
+  openPanel(`<button class="close-x" id="p-x">✕</button><h3>${esc(menu.title)}</h3><p>${esc(menu.desc)}</p>
+    <div class="btn-row">${menu.options.map(o => `<button data-b="${o.id}">${esc(o.label)}</button>`).join('')}</div>
+    <div class="beats" id="p-beats"></div>`);
+  $('p-x').onclick = closePanel;
+  $('panel').querySelectorAll('[data-b]').forEach(b => b.onclick = () => buildingOption(bldg, b.dataset.b));
+}
+function buildingSay(t) {
+  const box = $('p-beats');
+  if (box) box.innerHTML = `<p>${esc(t)}</p>`;
+}
+function buildingOption(bldg, opt) {
+  switch (opt) {
+    case 'drink': { const r = Places.drinkAtBar(S); buildingSay(r.msg); updateHud(); St.saveGame(S); break; }
+    case 'board': showBoard(bldg); break;
+    case 'buy': case 'sell': showTrade(bldg, opt); break;
+    case 'rest': { const r = Places.restAtInn(S); buildingSay(r.msg); updateHud(); St.saveGame(S); break; }
+    case 'pray': { const r = Places.prayAtShrine(S); buildingSay(r.msg); updateHud(); St.saveGame(S); break; }
+    case 'knock': { const r = Places.knockHouse(S, bldg.id); buildingSay(r.msg); break; }
+    case 'meet': showStaff(); break;
+    case 'talk': {
+      const n = world.nearestNpc(4);
+      if (n) openTopics(n); else buildingSay('No one to talk to.');
+      break;
+    }
+    default: buildingSay('Nothing happens.');
+  }
+}
+function showBoard(bldg) {
+  const box = $('p-beats');
+  const board = Missions.boardMissions(S, bldg.id);
+  const done = Missions.activeMissions(S).filter(m => m.state === 'done' && m.giver && m.giver.kind === 'bar' && m.giver.barId === bldg.id);
+  box.innerHTML = `<h4>📌 Mission board — ${esc(bldg.name)}</h4>` +
+    (board.map((m, i) => `<p><b>${i + 1}.</b> ${esc(m.title)} <small>${esc(m.desc)}</small><br><small>Reward: ${m.reward.gold}g</small> <button data-acc="${i}">Accept</button></p>`).join('') || '<p><small>No postings right now.</small></p>') +
+    (done.length ? `<h4>📜 Ready to turn in</h4>` + done.map(m => `<p>${esc(m.title)} <button data-tin="${esc(m.id)}">Turn in</button></p>`).join('') : '');
+  box.querySelectorAll('[data-acc]').forEach(b => b.onclick = () => {
+    const r = Missions.acceptMission(S, bldg.id, +b.dataset.acc);
+    buildingSay(r.msg + (r.ok && r.target ? ` 🎯 Target: ${r.target.name} — seek them in ${r.target.mapId}.` : ''));
+    updateHud(); St.saveGame(S);
+  });
+  box.querySelectorAll('[data-tin]').forEach(b => b.onclick = () => {
+    const r = Missions.turnIn(S, b.dataset.tin);
+    buildingSay(r.msg); updateHud(); St.saveGame(S); showBoard(bldg);
+  });
+}
+function showTrade(bldg, mode) {
+  const box = $('p-beats');
+  if (mode === 'buy') {
+    const list = Places.shopList(S, bldg.kind, bldg.id);
+    box.innerHTML = `<h4>🛒 ${esc(bldg.name)}</h4>` + list.map(o =>
+      `<p>${esc(o.name)} — ${o.price}g <small>${esc(o.desc)}</small>${o.owned ? ` <small>(own ${o.owned})</small>` : ''} <button data-buy="${esc(o.id)}">Buy</button></p>`).join('');
+    box.querySelectorAll('[data-buy]').forEach(b => b.onclick = () => {
+      const r = Places.buyItem(S, b.dataset.buy);
+      buildingSay(r.msg); updateHud(); St.saveGame(S);
+    });
+  } else {
+    const inv = S.player.inventory.filter(i => (St.ITEMS[i.id] || {}).price > 0);
+    box.innerHTML = `<h4>💰 Sell</h4>` + (inv.map(i => {
+      const it = St.ITEMS[i.id]; const price = Math.max(1, Math.floor(it.price / 2));
+      return `<p>${esc(it.name)} ×${i.qty} — ${price}g <button data-sell="${esc(i.id)}">Sell</button></p>`;
+    }).join('') || '<p><small>Nothing worth selling.</small></p>');
+    box.querySelectorAll('[data-sell]').forEach(b => b.onclick = () => {
+      const r = Places.sellItem(S, b.dataset.sell);
+      buildingSay(r.msg); updateHud(); St.saveGame(S); showTrade(bldg, 'sell');
+    });
+  }
+}
+function showStaff() {
+  const box = $('p-beats');
+  const staff = world.npcs.filter(n => n.rec && n.rec.adult === true);
+  box.innerHTML = `<h4>🌸 Staff</h4>` + (staff.map(n =>
+    `<p>${esc(n.rec.name)} <small>${esc(n.rec.desc || '')}</small> <button data-staff="${esc(n.id)}">Talk</button></p>`).join('') || '<p><small>No one is receiving guests right now.</small></p>');
+  box.querySelectorAll('[data-staff]').forEach(b => b.onclick = () => {
+    const n = world.npcById(b.dataset.staff);
+    if (n) openTopics(n);
+  });
 }
 let walkToken = 0;
 function walkAdjacent(npc, fn) {
@@ -253,6 +575,26 @@ function openNpcPanel(n) {
     row.appendChild(b);
   }
   $('p-talk').onclick = () => openTopics(n);
+  // ❗ personal request / turn-in (missions.js)
+  const offer = Missions.npcOffer(n.id, S);
+  const turnin = Missions.activeMissions(S).find(m => m.state === 'done' && m.giver && m.giver.kind === 'npc' && m.giver.npcId === n.id);
+  if (offer || turnin) {
+    const row2 = document.createElement('div');
+    row2.className = 'btn-row';
+    if (offer) {
+      const b = document.createElement('button');
+      b.textContent = '❗ Request';
+      b.onclick = () => doRequest(n.id);
+      row2.appendChild(b);
+    }
+    if (turnin) {
+      const b = document.createElement('button');
+      b.textContent = '📜 Turn in: ' + turnin.title;
+      b.onclick = () => { const r = Missions.turnIn(S, turnin.id); say('sys', r.msg); updateHud(); St.saveGame(S); openNpcPanel(n); };
+      row2.appendChild(b);
+    }
+    $('panel').appendChild(row2);
+  }
 }
 function doQuickAction(actionId, n) {
   if (!n) { toast('No one selected — click a person first.'); return; }
@@ -428,8 +770,9 @@ function doAiko(sub, target) {
 
 // ---------------- warps / doors / menu ----------------
 function doWarp(w) {
+  const fromId = world.mapId, fromDir = dirFromWarp(w);
   say('sys', `🚶 ${w.label}…`);
-  world.loadLocation(w.to);
+  loadLocationEx(w.to, fromId, fromDir);
   const [tx, ty] = w.ts || world.map.spawns.player;
   world.player.x = tx; world.player.y = ty; world.player.fx = tx; world.player.fy = ty;
   world.aiko.x = tx; world.aiko.y = ty;

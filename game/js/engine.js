@@ -4,6 +4,7 @@
 import * as Spr from './sprites.js';
 import * as TM from './tilemaps.js';
 import * as DLG from './dialogue.js';
+import { damagePlayer, rand } from './state.js';
 
 export const TILE_PX = 32;
 
@@ -22,6 +23,8 @@ export class World {
     this.possessed = null; // npcId Aiko is inside, or null
     this.aikoMode = 'follow'; // follow|fly|hide
     this.pendingInteract = null;
+    this.party = []; this.shikigamiVis = []; this.animals = []; this.hostiles = [];
+    this._lowHpT = -99;
   }
 
   loadLocation(locId) {
@@ -32,8 +35,9 @@ export class World {
     this.player = { x: px, y: py, fx: px, fy: py, facing: 'down', moving: false, walkT: 0, spec: Spr.playerSpec() };
     this.aiko = { x: px, y: py + 1, fx: px, fy: py + 1, facing: 'down', spec: Spr.aikoSpec(), bob: Math.random() * 6 };
     this.npcs = [];
+    this.party = []; this.shikigamiVis = []; this.animals = []; this.hostiles = [];
     for (const [id, [nx, ny]] of Object.entries(map.npcSpots || {})) {
-      const rec = DLG.NPCS[id];
+      const rec = DLG.NPCS[id] || (map.genNpcs && map.genNpcs[id]);
       if (!rec) continue;
       this.npcs.push({ id, rec, x: nx, y: ny, fx: nx, fy: ny, facing: 'down', spec: Spr.npcSpec(id, rec), wanderT: 2 + Math.random() * 4, pose: 'stand', poseT: 0, dx: 0, dy: 0 });
     }
@@ -97,7 +101,7 @@ export class World {
       }
     }
     // smooth pixel positions
-    for (const e of [this.player, this.aiko, ...this.npcs]) {
+    for (const e of [this.player, this.aiko, ...this.npcs, ...this.party, ...this.animals, ...this.hostiles]) {
       if (!e) continue;
       e.fx += (e.x - e.fx) * Math.min(1, dt * 10);
       e.fy += (e.y - e.fy) * Math.min(1, dt * 10);
@@ -129,6 +133,93 @@ export class World {
     for (const n of this.npcs) {
       if (Math.abs(n.x - this.player.x) + Math.abs(n.y - this.player.y) === 1) {
         n.facing = n.x < this.player.x ? 'right' : n.x > this.player.x ? 'left' : n.y < this.player.y ? 'down' : 'up';
+      }
+    }
+    // party follow: one tile per 250ms toward the player when farther than 2
+    if (!this.choreo) for (const m of this.party) {
+      m.stepT = (m.stepT || 0) + dt;
+      const dist = Math.abs(m.x - this.player.x) + Math.abs(m.y - this.player.y);
+      if (dist > 2 && m.stepT >= 0.25) {
+        m.stepT = 0;
+        const path = TM.findPath(this.map, m.x, m.y, this.player.x, this.player.y, this.S, false);
+        if (path.length) {
+          const [nx, ny] = path[0];
+          if (!this.tileBlocked(nx, ny, false)) {
+            const ox = m.x, oy = m.y;
+            m.x = nx; m.y = ny;
+            m.facing = ny < oy ? 'up' : ny > oy ? 'down' : nx < ox ? 'left' : 'right';
+          }
+        }
+      }
+    }
+    // shikigami orbit: float around the player, no collision (Aiko excluded —
+    // she has her own entity; party.js keeps her out of shikigamiVis)
+    for (const v of this.shikigamiVis) {
+      const ang = this.time * 1.5 + (v.orbitIdx || 0) * 2.1;
+      const tx = this.player.x + Math.cos(ang) * 1.2;
+      const ty = this.player.y + Math.sin(ang) * 1.2;
+      const k = Math.min(1, dt * 6);
+      v.fx += (tx - v.fx) * k; v.fy += (ty - v.fy) * k;
+      v.x = Math.round(v.fx); v.y = Math.round(v.fy);
+    }
+    // ambient animals: wander; hostile ones (boar/wolf) hunt the player
+    if (!this.choreo) for (const a of this.animals) {
+      a.wanderT -= dt; a.atkT = Math.max(0, (a.atkT || 0) - dt);
+      const dist = Math.abs(a.x - this.player.x) + Math.abs(a.y - this.player.y);
+      if (a.hostile) {
+        if (dist <= 6 && dist > 1) {
+          a.stepT = (a.stepT || 0) + dt;
+          if (a.stepT >= 0.35) {
+            a.stepT = 0;
+            const path = TM.findPath(this.map, a.x, a.y, this.player.x, this.player.y, this.S, false);
+            if (path.length) {
+              const [nx, ny] = path[0];
+              if (!this.tileBlocked(nx, ny, false) && !(nx === this.player.x && ny === this.player.y)) {
+                const ox = a.x, oy = a.y;
+                a.x = nx; a.y = ny;
+                a.facing = ny < oy ? 'up' : ny > oy ? 'down' : nx < ox ? 'left' : 'right';
+              }
+            }
+          }
+        }
+        if (dist === 1 && a.atkT <= 0) {
+          a.atkT = 1.4;
+          this.hurtPlayer(Math.max(1, (a.atk || 6) - this.S.player.def - rand(0, 2)), a.name || 'A wild beast');
+        }
+      } else if (a.wanderT <= 0) {
+        a.wanderT = 3 + Math.random() * 5;
+        const dirs = [[0, 1], [0, -1], [1, 0], [-1, 0]];
+        const [dx, dy] = dirs[(Math.random() * 4) | 0];
+        const nx = a.x + dx, ny = a.y + dy;
+        const occupied = this.npcs.some(o => o.x === nx && o.y === ny) || (this.player.x === nx && this.player.y === ny);
+        if (!this.tileBlocked(nx, ny, false) && !occupied) {
+          a.x = nx; a.y = ny;
+          a.facing = dy < 0 ? 'up' : dy > 0 ? 'down' : dx < 0 ? 'left' : 'right';
+        }
+      }
+    }
+    // hostiles (bandits, demons, soldiers): close within 7, strike adjacent
+    if (!this.choreo) for (const h of this.hostiles) {
+      h.atkT = Math.max(0, (h.atkT || 0) - dt);
+      const dist = Math.abs(h.x - this.player.x) + Math.abs(h.y - this.player.y);
+      if (dist <= 7 && dist > 1) {
+        h.stepT = (h.stepT || 0) + dt;
+        if (h.stepT >= 0.35) {
+          h.stepT = 0;
+          const path = TM.findPath(this.map, h.x, h.y, this.player.x, this.player.y, this.S, false);
+          if (path.length) {
+            const [nx, ny] = path[0];
+            if (!this.tileBlocked(nx, ny, false) && !(nx === this.player.x && ny === this.player.y)) {
+              const ox = h.x, oy = h.y;
+              h.x = nx; h.y = ny;
+              h.facing = ny < oy ? 'up' : ny > oy ? 'down' : nx < ox ? 'left' : 'right';
+            }
+          }
+        }
+      }
+      if (dist === 1 && h.atkT <= 0) {
+        h.atkT = 1.4;
+        this.hurtPlayer(Math.max(1, (h.atk || 8) - this.S.player.def - rand(0, 2)), h.name || 'A foe');
       }
     }
     // choreography advance
@@ -204,6 +295,10 @@ export class World {
     ents.push({ e: this.player, kind: 'player' });
     if (this.aikoMode !== 'hide' && !this.possessed) ents.push({ e: this.aiko, kind: 'aiko' });
     for (const n of this.npcs) ents.push({ e: n, kind: 'npc', id: n.id });
+    for (const m of this.party) ents.push({ e: m, kind: 'party' });
+    for (const v of this.shikigamiVis) ents.push({ e: v, kind: 'shik' });
+    for (const a of this.animals) ents.push({ e: a, kind: a.hostile ? 'hostile' : 'animal' });
+    for (const h of this.hostiles) ents.push({ e: h, kind: 'hostile' });
     ents.sort((a, b) => a.e.fy - b.e.fy);
     for (const { e, kind, id } of ents) {
       const px = e.fx * TILE_PX - cam.x, py = e.fy * TILE_PX - cam.y;
@@ -238,6 +333,17 @@ export class World {
           ctx.fillRect(cx - 14, baseY - 46 + dy, 28, 44);
         }
       }
+      // nameplates for party / shikigami / animals / hostiles
+      const plateColor = { party: '#a8ffb3', shik: '#9ae8ff', animal: '#d8d8d8', hostile: '#ff7a7a' }[kind];
+      if (plateColor) {
+        ctx.font = '10px sans-serif'; ctx.textAlign = 'center';
+        const raw = String(e.name || '???');
+        const nm = raw.length > 18 ? raw.slice(0, 17) + '…' : raw;
+        const tw = ctx.measureText(nm).width;
+        ctx.fillStyle = 'rgba(0,0,0,.55)'; ctx.fillRect(cx - tw / 2 - 3, baseY - 52 + dy, tw + 6, 13);
+        ctx.fillStyle = plateColor;
+        ctx.fillText(nm, cx, baseY - 42 + dy);
+      }
     }
     // click-target marker
     if (this.path.length) {
@@ -255,7 +361,7 @@ export class World {
     };
   }
   tileName(ch) {
-    return { '.': 'GRASS', ',': 'SAND', '~': 'WATER', 'T': 'TREE', 'o': 'ROCK', '#': 'WALL', '=': 'FLOOR', 'D': 'DOOR', '+': 'ROAD', '*': 'FLOWER', 'B': 'BRIDGE', 'S': 'STAIR' }[ch] || 'VOID';
+    return { '.': 'GRASS', ',': 'SAND', '~': 'WATER', 'T': 'TREE', 'o': 'ROCK', '#': 'WALL', '=': 'FLOOR', 'D': 'DOOR', '+': 'ROAD', '*': 'FLOWER', 'B': 'BRIDGE', 'S': 'STAIR', 'h': 'HOUSE', 'b': 'BAR', 'p': 'BROTHEL', 's': 'SHOP', 'i': 'INN', 'r': 'SHRINEH' }[ch] || 'VOID';
   }
   screenToTile(sx, sy) {
     const r = this.cv.getBoundingClientRect();
@@ -271,6 +377,38 @@ export class World {
     for (const n of this.npcs) {
       const d = Math.abs(n.x - p.x) + Math.abs(n.y - p.y);
       if (d <= maxD && d < bd) { bd = d; best = n; }
+    }
+    return best;
+  }
+  // ---- party / shikigami / hostiles helpers ----
+  hurtPlayer(n, src) {
+    damagePlayer(this.S, n);
+    const hp = this.S.player.hp, max = this.S.player.maxHp;
+    if (hp <= 0) {
+      if (this.hooks.onPlayerDeath) this.hooks.onPlayerDeath({ damage: n, src });
+    } else if (hp <= Math.ceil(max * 0.25) && this.time - this._lowHpT > 10 && this.hooks.toast) {
+      this._lowHpT = this.time;
+      this.hooks.toast('⚠️ You are gravely wounded!');
+    }
+  }
+  hostileById(id) { return this.hostiles.find(h => h.id === id); }
+  removeHostile(id) {
+    this.hostiles = this.hostiles.filter(h => h.id !== id);
+    this.animals = this.animals.filter(a => !(a.hostile && a.id === id));
+  }
+  entityAt(x, y) {
+    return this.npcs.find(n => n.x === x && n.y === y)
+      || this.hostiles.find(h => h.x === x && h.y === y)
+      || this.animals.find(a => a.x === x && a.y === y)
+      || this.party.find(p => p.x === x && p.y === y)
+      || null;
+  }
+  nearestHostile(maxD = 7) {
+    const p = this.player;
+    let best = null, bd = 1e9;
+    for (const h of this.hostiles) {
+      const d = Math.abs(h.x - p.x) + Math.abs(h.y - p.y);
+      if (d <= maxD && d < bd) { bd = d; best = h; }
     }
     return best;
   }

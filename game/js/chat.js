@@ -55,6 +55,10 @@ function findNpc(nearby, frag) {
 
 const hasWord = (t, ...words) => words.some((w) => new RegExp(`\\b${w}\\b`).test(t));
 
+// Building words: "enter the bar" enters the building instead of walking to it.
+const BUILDING_RE = /^(bar|tavern|brothel|shop|store|inn|shrine|house|pub|smith|weaponsmith)\b/;
+const stripArticle = (s) => String(s || '').replace(/^(the|a|an)\s+/, '');
+
 // ---------------------------------------------------------------------------
 // parseCommand(input, ctx) -> intent
 // ctx: { nearby: [{id, name}], S }
@@ -185,11 +189,110 @@ export function parseCommand(input, ctx = {}) {
   }
 
   // -- goto (places) ---------------------------------------------------------------
+  // Named buildings are entered, not walked to: "enter the bar" -> enter intent.
   m = t.match(/^(go|travel|journey|head|walk|move)\s+to\s+(.+)$/) || t.match(/^(visit|enter)\s+(.+)$/);
-  if (m) return { type: 'goto', target: m[2] };
+  if (m) {
+    const dest = m[2];
+    const stripped = stripArticle(dest);
+    if ((m[1] === 'enter' || m[1] === 'visit') && BUILDING_RE.test(stripped)) {
+      return { type: 'enter', target: stripped };
+    }
+    return { type: 'goto', target: dest };
+  }
+
+  // -- party / shikigami / buildings / missions / shop / travel ---------------------------
+  // New-system intents. Other agents execute them; parseCommand only classifies.
+  // Placed after goto but before the "looks like a command" fallback and chat.
+
+  // -- buildings: exit -----------------------------------------------------------------------
+  if (/^(exit|leave building|go outside)$/.test(t)) return { type: 'exit' };
+  m = t.match(/^go\s+inside\s+(?:the\s+)?(.+)$/);
+  if (m && BUILDING_RE.test(m[1])) return { type: 'enter', target: m[1] };
+
+  // -- missions / quest log ---------------------------------------------------------------------
+  if (/^(missions|mission board|quest log|quests|journal)$/.test(t)) return { type: 'missions' };
+  m = t.match(/^accept\s+(?:mission\s+)?(\d+)$/);
+  if (m) return { type: 'mission', sub: 'accept', n: parseInt(m[1], 10) };
+  m = t.match(/^abandon\s+(?:mission\s+)?(.+)$/);
+  if (m) return { type: 'mission', sub: 'abandon', target: stripArticle(m[1]) };
+  m = t.match(/^capture\s+(.+)$/);
+  if (m) {
+    const name = stripArticle(m[1]);
+    const npc = findNpc(nearby, name);
+    return { type: 'capture', target: npc ? npc.id : name };
+  }
+
+  // -- shop ----------------------------------------------------------------------------------------
+  m = t.match(/^buy\s+(.+)$/);
+  if (m) return { type: 'shop', sub: 'buy', item: m[1] };
+  m = t.match(/^sell\s+(.+)$/);
+  if (m) return { type: 'shop', sub: 'sell', item: m[1] };
+  if (/^(shop|store|browse shop|browse store)$/.test(t)) return { type: 'shop', sub: 'list' };
+
+  // -- travel (generate a new neighboring procedural map; distinct from "go north") ------------------
+  m = t.match(/^travel\s+(north|n|south|s|east|e|west|w|up|down|left|right)$/);
+  if (m) return { type: 'travel', dir: DIRS[m[1]] };
+
+  // -- party ------------------------------------------------------------------------------------------
+  m = t.match(/^recruit\s+(.+)$/) || t.match(/^(team up with|hire|enlist)\s+(.+)$/);
+  if (m) {
+    const name = stripArticle(m[2] || m[1]);
+    const npc = findNpc(nearby, name);
+    return { type: 'recruit', target: npc ? npc.id : name };
+  }
+  if (t === 'recruit') return { type: 'unknown', hint: 'Recruit whom? Name someone nearby you want to team up with.' };
+  m = t.match(/^dismiss\s+(.+)$/);
+  if (m) {
+    const name = stripArticle(m[1]);
+    const npc = findNpc(nearby, name);
+    return { type: 'dismiss', target: npc ? npc.id : name };
+  }
+  if (t === 'disband') return { type: 'dismiss', target: null, all: true };
+  if (/^(party|show party)$/.test(t)) return { type: 'party' };
+
+  // -- shikigami ----------------------------------------------------------------------------------------
+  // NOTE: plain "release" (possession release) is matched much earlier; these need a target word.
+  m = t.match(/^bind\s+(.+)$/);
+  if (m) {
+    const name = stripArticle(m[1]);
+    const npc = findNpc(nearby, name);
+    return { type: 'bind', target: npc ? npc.id : name };
+  }
+  if (t === 'bind') return { type: 'unknown', hint: 'Bind whom? Name the creature or spirit you want as a shikigami.' };
+  m = t.match(/^release\s+shikigami\s+(.+)$/);
+  if (m) {
+    const name = stripArticle(m[1]);
+    const npc = findNpc(nearby, name);
+    return { type: 'release', target: npc ? npc.id : name };
+  }
+  m = t.match(/^free\s+(.+)$/);
+  if (m) {
+    const name = stripArticle(m[1]);
+    const npc = findNpc(nearby, name);
+    return { type: 'release', target: npc ? npc.id : name };
+  }
+  if (/^shikigami(?:\s+list)?$/.test(t)) return { type: 'shikigami', sub: 'list' };
+  m = t.match(/^shikigami\s+(attack|follow|hide)$/);
+  if (m) return { type: 'shikigami', sub: 'order', order: m[1] };
+  m = t.match(/^summon\s+(.+)$/);
+  if (m) {
+    const name = stripArticle(m[1]);
+    const npc = findNpc(nearby, name);
+    return { type: 'summon', target: npc ? npc.id : name };
+  }
+
+  // -- npc work requests -----------------------------------------------------------------------------------
+  if (t === 'request') return { type: 'request' };
+  m = t.match(/^(?:request|ask)\s+(.+?)\s+for\s+work$/)
+    || t.match(/^request\s+work\s+from\s+(.+)$/); // "request work from the elder"
+  if (m) {
+    const name = stripArticle(m[1]);
+    const npc = findNpc(nearby, name);
+    return { type: 'request', target: npc ? npc.id : name };
+  }
 
   // -- looks like a command, but nothing matched ---------------------------------------
-  if (/^(go|walk|move|run|open|unlock|take|get|grab|look|use|talk|attack|kill|fight|kiss|give|push|pull|climb|enter|exit|leave|search|inspect|north|south|east|west|up|down|left|right)\b/.test(t)) {
+  if (/^(go|walk|move|run|open|unlock|take|get|grab|look|use|talk|attack|kill|fight|kiss|give|push|pull|climb|enter|exit|leave|search|inspect|north|south|east|west|up|down|left|right|recruit|bind|summon|capture|travel|dismiss|shikigami|buy|sell|accept|abandon|missions|party)\b/.test(t)) {
     return { type: 'unknown', hint: `I don't understand "${input.trim()}". Try "help" for commands, or just talk to Aiko.` };
   }
 
@@ -405,6 +508,8 @@ export class AikoBrain {
       `Hmm, let me think... my fox brain says: snacks first, questions later.`,
       `I'm listening, ${name}! Though fair warning, my advice is 90% mischief.`,
       `The wind carries interesting rumors today. Or maybe that's just my stomach growling.`,
+      `If you ever bind a new shikigami, ${name}, I'd love the company — someone else to share tail-grooming duty!`,
+      `Our party keeps growing, huh? A hero is only as strong as the friends at their side. Present fox included, obviously.`,
     );
     return say(this._pick('fallback', fallbacks), 'neutral');
   }
