@@ -13,6 +13,15 @@ topic labels. **Aiko is never a romantic or sexual subject** — she is
 young/minor-coded and stays strictly platonic, as do all minors and any
 ambiguous-age NPCs (e.g. miko_hana). No explicit imagery is generated.
 
+**Romanceable adults:** six commoner women (Hanae, Yae, Tsubaki, Koharu,
+Ayame, Okiku) plus three daimyo princesses (Iroha of the Oda at Azuchi, Yū
+of the Takeda at Kōfu, Setsu of the Uesugi at Kasugayama). Each has an
+evening → 🔞 night → daily lover-visit arc, and (once a lover) a
+**🌙 Interactive night together** topic: a Dragon Knight 4-style scene with
+clickable hotspots over tasteful CG art (`cg_bedroom_night.png`,
+`cg_garden_moon.png`; see `js/scenes.js`). The explicit content lives in the
+scene text; the imagery stays non-explicit.
+
 **Fantasy:** You are a wandering onmyōji in Sengoku Japan, starting in the
 6th month of 1570. Aiko, your bound shikigami, fights and snarks beside you.
 **There is no script and no chosen one:** real history unfolds on its real

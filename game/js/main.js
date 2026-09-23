@@ -13,6 +13,7 @@ import * as History from './history.js';
 import * as Factions from './factions.js';
 import * as Link from './aiko_link.js';
 import * as Explore from './explore.js';
+import * as Scenes from './scenes.js';
 
 // ---- wire cross-module hooks (factions <-> history) ----
 History.setFactionName((fid) => Factions.factionDisplayName(S, fid));
@@ -37,6 +38,7 @@ let combatPhase = 'menu';
 let combatReturn = 'location';
 let combatNotes = [];
 let dlg = null;
+let hscene = null; // interactive H-scene state {sceneId, npcId, stageIdx, touches, seen, log}
 let pendingMsg = '';
 let pendingNews = [];
 let officerLabel = null;
@@ -73,8 +75,8 @@ function speakerInfo(who) {
   }
   const npc = DLG.NPCS[who];
   if (!npc) return { name: who, port: '' };
-  const arch = DLG.ARCHETYPES[npc.archetype];
-  return { name: npc.name, port: portrait(arch.portrait, arch.fallback) };
+  const p = DLG.npcPortraitFor(npc);
+  return { name: npc.name, port: portrait(p.portrait, p.fallback) };
 }
 function factionsHere() {
   return Object.keys(Factions.FACTIONS).filter((fid) =>
@@ -121,6 +123,7 @@ function applyEffects(effects) {
     if (ef.discover) { St.discover(S, ef.discover); notes.push(`🗺 New location discovered: ${MapX.locationName(ef.discover)}`); }
     if (ef.aiko) { const line = Aiko.onEvent(S, ef.aiko); if (line) notes.push('🦊 Aiko: “' + line + '”'); }
     if (ef.combat) { startCombat(ef.combat === 'officer' ? Combat.officerFor(S, officerLabel) : ef.combat, 'dialogue'); return { notes, combat: true }; }
+    if (ef.scene) { startScene(ef.scene[0], ef.scene[1]); return { notes, scene: true }; }
   }
   return { notes };
 }
@@ -312,6 +315,44 @@ function dialogueNext() {
   dlg.idx += 1;
   if (dlg.idx >= dlg.beats.length && dlg.afterBeats === 'topics') dlg.afterBeats = null;
   render();
+}
+
+// ---------------------------------------------------------------- interactive H-scenes (Dragon Knight 4 flavor)
+// Clickable hotspots over tasteful CG art; explicit content lives in the text.
+// Only reachable via the hscene topic, which exists solely on adult NPCs.
+function startScene(sceneId, npcId) {
+  const sc = Scenes.SCENES[sceneId];
+  const npc = DLG.resolveNpc(S, npcId);
+  hscene = { sceneId, npcId, stageIdx: 0, touches: 0, seen: {}, log: [sc.stages[0].intro(npc.name)] };
+  screen = 'hscene';
+  render();
+}
+
+function renderScene() {
+  const sc = Scenes.SCENES[hscene.sceneId];
+  const npc = DLG.resolveNpc(S, hscene.npcId);
+  const stage = sc.stages[hscene.stageIdx];
+  const cg = npc.sceneCg || sc.cg;
+  const done = hscene.touches >= stage.need;
+  const hearts = '❤'.repeat(Math.min(hscene.touches, stage.need)) + '🤍'.repeat(Math.max(0, stage.need - hscene.touches));
+  const last = hscene.stageIdx === sc.stages.length - 1;
+  return `
+  <div class="screen hscene-screen" style="background-image:url('assets/${esc(cg)}')">
+    <div class="hscene-top"><span>🌙 <b>${esc(npc.name)}</b> — ${esc(stage.title)}</span><span class="hearts">${hearts}</span></div>
+    <div class="hscene-spots">
+      ${done ? '' : stage.spots.map(sp =>
+        `<button class="hotspot" style="left:${sp.x}%;top:${sp.y}%" data-act="scene-touch" data-id="${sp.id}" title="${esc(sp.label)}">${sp.icon}</button>`
+      ).join('')}
+    </div>
+    <div class="hscene-log">${hscene.log.slice(-6).map(t => `<p>${esc(t)}</p>`).join('')}</div>
+    ${done
+      ? `<div class="hscene-next"><p>${esc(stage.advance(npc.name))}</p><div class="btn-row">
+           ${last
+             ? `<button class="btn big" data-act="scene-end">🌅 Rest until morning</button>`
+             : `<button class="btn big" data-act="scene-next">❤ Continue</button>`}
+         </div></div>`
+      : `<div class="hscene-hint">Touch the glowing spots… ${stage.need - hscene.touches} more</div>`}
+  </div>`;
 }
 
 // ---------------------------------------------------------------- COMBAT
@@ -829,10 +870,40 @@ document.addEventListener('click', (ev) => {
       St.saveGame(S); break;
     }
     case 'dlg-next': dialogueNext(); return;
+    case 'scene-touch': {
+      if (!hscene) break;
+      const sc = Scenes.SCENES[hscene.sceneId];
+      const stage = sc.stages[hscene.stageIdx];
+      if (hscene.touches >= stage.need) break;
+      const sp = stage.spots.find(x => x.id === id);
+      if (!sp) break;
+      const npc = DLG.resolveNpc(S, hscene.npcId);
+      const n = (hscene.seen[sp.id] = (hscene.seen[sp.id] || 0) + 1);
+      hscene.log.push(sp.texts[(n - 1) % sp.texts.length](npc.name));
+      hscene.touches += 1;
+      St.saveGame(S); render(); return;
+    }
+    case 'scene-next': {
+      if (!hscene) break;
+      const sc = Scenes.SCENES[hscene.sceneId];
+      hscene.stageIdx += 1; hscene.touches = 0;
+      const npc = DLG.resolveNpc(S, hscene.npcId);
+      hscene.log.push(sc.stages[hscene.stageIdx].intro(npc.name));
+      St.saveGame(S); render(); return;
+    }
+    case 'scene-end': {
+      if (!hscene) break;
+      const npcId = hscene.npcId;
+      hscene = null; screen = 'location';
+      applyEffects([{ heal: 40 }, { exp: 30 }, { flag: ['lovday_' + npcId, 'TODAY'] }, { bond: 2 }]);
+      St.addNews(S, `🌙 A night of passion with ${esc(DLG.resolveNpc(S, npcId).name)} — the realm need never know.`);
+      St.saveGame(S); render(); return;
+    }
     case 'dlg-topics': dlg.choices = null; dlg.idx = dlg.beats.length; render(); return;
     case 'dlg-topic': {
       const t = dlg.npc.topics.find(t => t.id === id);
       if (!t) break;
+      if (t.need && !t.need(S)) break;
       if (t.id === 'duel') {
         const dm = Factions.currentDaimyo(S, dlg.npc.faction);
         officerLabel = `${dm.name}'s Champion`;
@@ -840,6 +911,10 @@ document.addEventListener('click', (ev) => {
       dlg.topic = t;
       dlg.beats = t.beats(S);
       dlg.idx = 0; dlg.choices = null; dlg.afterBeats = t.choices ? 'choices' : 'topics';
+      const fx = applyEffects(t.effects);
+      dlg.notes.push(...fx.notes);
+      if (fx.combat || fx.scene) { St.saveGame(S); return; }
+      St.saveGame(S);
       render(); return;
     }
     case 'dlg-choice': {
@@ -1027,7 +1102,7 @@ const RENDERERS = {
   title: renderTitle, map: renderMap, location: renderLocation,
   dialogue: renderDialogue, combat: renderCombat, status: renderStatus,
   shop: renderShop, ending: renderEnding, factions: renderFactions,
-  missions: renderMissions,
+  missions: renderMissions, hscene: renderScene,
 };
 
 function render() {

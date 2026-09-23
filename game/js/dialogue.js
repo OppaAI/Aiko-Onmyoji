@@ -28,6 +28,7 @@ export const ARCHETYPES = {
   dancer:      { label: 'Shirabyoshi Dancer', portrait: 'npc_dancer.png', fallback: '💃' },
   onna_musha:  { label: 'Woman Warrior', portrait: 'npc_onna_musha.png',  fallback: '🗡️' },
   innkeeper:   { label: 'Innkeeper',    portrait: 'npc_innkeeper.png',    fallback: '🏮' },
+  princess:    { label: 'Princess',     portrait: 'npc_princess_iroha.png', fallback: '👸' },
 };
 
 // who: 'n' narrator | 'h' hero | 'a' aiko | npcId
@@ -566,6 +567,7 @@ export const NPCS = {
   // ---------------- KYOTO ----------------
   lady_tsubaki: {
     name: 'Lady Tsubaki', archetype: 'noble_lady', location: 'kyoto', adult: true,
+    sceneCg: 'cg_garden_moon.png',
     greet(s) {
       return [
         N('In a palace garden, a court lady in her early twenties in layered juni-hitoe robes pauses her fan mid-stroke. She regards you with open curiosity — rare in this court of masks.'),
@@ -827,7 +829,208 @@ export const NPCS = {
       },
     ],
   },
+
+  // ---------------------------------------------------------------------------
+  // Princesses of the great houses — adult, romanceable, fully consensual.
+  // (Same 18+ policy as the other adult NPCs: 🔞 text only, portraits modest.)
+  // ---------------------------------------------------------------------------
+  princess_iroha: {
+    name: 'Princess Iroha', archetype: 'princess', portrait: 'npc_princess_iroha.png',
+    adult: true, desc: 'A daughter of the Oda house, in red and gold — sharp-eyed, sharper-tongued, and utterly fearless.',
+    greet: [
+      [A('Princess Iroha regards you over the rim of her tea cup. "An onmyoji. How... useful you might be. Sit — if you can keep up."')],
+      [A('Iroha is flying a hawk in the courtyard when you arrive. "Watch," she commands, and the bird stoops like a thunderbolt. She grins. "The Oda take what they want."')],
+    ],
+    topics: [
+      {
+        id: 'court', label: 'Ask about the Oda court', beats: (s) => [
+          N('"My uncle builds an empire out of ashigaru and guns," Iroha says. "The old houses sneer — and then they kneel. Remember that, onmyoji: power respects only power."'),
+          A('She leans closer. "But even he needs softer weapons. Poetry. Marriage. A well-placed whisper. That is where women like me rule."'),
+        ],
+      },
+      {
+        id: 'evening', label: '💗 Spend an evening with Iroha',
+        need: (s) => !s.world.flags.aff_iroha,
+        beats: (s) => [
+          N('You ask the princess for an evening of her time — expecting refusal. Instead she laughs, delighted. "Bold! I like bold. Come — we\'ll drink plum wine, and I\'ll tell you which courtiers are fools."'),
+          A('The evening stretches: poetry games, gossip, her hawk asleep on its perch. When you finally rise to leave, Iroha catches your sleeve. "Stay a little longer," she says quietly. "No one commands me — but tonight, I\'m asking."'),
+          H('You stay. Nothing happens that the chronicles would record — but something shifts between you all the same.'),
+        ],
+        effects: [{ flag: ['aff_iroha', true] }, { bond: 2 }, { exp: 20 }, { karma: 1 }],
+      },
+      {
+        id: 'night', label: '🌙 Share a night with Iroha 🔞',
+        need: (s) => s.world.flags.aff_iroha && !s.world.flags.lover_iroha,
+        beats: (s) => [
+          N('Iroha dismisses her attendants with a look that brooks no argument. The shoji slides shut. "The Oda take what they want," she reminds you, untying her obi with deliberate slowness. "Tonight — I want you."'),
+          A('"No politics in this room," she whispers, pulling you down beside her. "No war, no courts. Just you and me, onmyoji. Show me what your arts are good for."'),
+          H('What follows is fierce and laughing and utterly without restraint — a princess claiming her pleasure the way her house claims provinces: completely. Dawn finds you both wrecked and grinning.'),
+          A('"Mine," Iroha declares, tracing a finger down your chest. "You\'re mine now. Come back to me — that\'s a command, not a request."'),
+        ],
+        effects: [{ flag: ['lover_iroha', true] }, { bond: 3 }, { exp: 40 }, { heal: 20 }, { memory: ['princess_iroha', 'note', 'Lovers — fierce and laughing'] }],
+      },
+      {
+        id: 'lover', label: '🌅 Visit your lover Iroha',
+        need: (s) => s.world.flags.lover_iroha && s.world.flags.lovday_iroha !== dateKey(s),
+        beats: (s) => [
+          N('Iroha\'s face lights up when you slip into her chambers — a smile no courtier ever sees. "There you are," she breathes. "The day was unbearable without you."'),
+        ],
+        choices: [
+          {
+            label: '🌙 A passionate night 🔞',
+            beats: (s) => [
+              H('She meets you halfway, fierce and joyful — a tangle of silk and laughter and heat. Afterwards she sleeps with her head on your chest, a hawk\'s possessive grip on your heart. "Stay till dawn," she mumbles. "The realm can wait."'),
+            ],
+            effects: [{ flag: ['lovday_iroha', 'TODAY'] }, { bond: 1 }, { exp: 30 }, { heal: 30 }],
+          },
+          {
+            label: '🍶 A quiet evening of wine and talk',
+            beats: (s) => [
+              N('You drink plum wine and trade verses until late. Iroha beats you at poetry and is insufferable about it — and utterly adorable. "You let me win," she accuses. You didn\'t.'),
+            ],
+            effects: [{ flag: ['lovday_iroha', 'TODAY'] }, { bond: 1 }, { exp: 15 }],
+          },
+        ],
+      },
+    ],
+  },
+
+  princess_yu: {
+    name: 'Princess Yū', archetype: 'princess', portrait: 'npc_princess_yu.png',
+    adult: true, desc: 'A daughter of the Takeda, in purple and gold — a horsewoman with her father\'s fire.',
+    greet: [
+      [A('Princess Yū is just dismounting, cheeks flushed from the ride. "You! Onmyoji! Tell me — do the spirits favor the swift or the strong?"')],
+      [A('Yū is drilling with a wooden sword when you arrive, and nearly takes your head off before recognizing you. "Ha! Good reflexes. Father says a warrior is measured by their scars — and their lovers."')],
+    ],
+    topics: [
+      {
+        id: 'takeda', label: 'Ask about the Takeda', beats: (s) => [
+          N('"Swift as the wind, silent as the forest, fierce as fire, immovable as the mountain!" Yū recites, eyes blazing. "That is the Takeda way. My father will unite this land — you\'ll see."'),
+          A('Her fire dims a fraction. "...though the Oda guns... no. Never mind. The Takeda do not doubt. We ride."'),
+        ],
+      },
+      {
+        id: 'evening', label: '💗 Spend an evening with Yū',
+        need: (s) => !s.world.flags.aff_yu,
+        beats: (s) => [
+          N('"Race me," Yū demands, already mounting. "If you keep up, I\'ll share my supper and my stories. If not — you groom my horse."'),
+          A('You keep up — barely. Over supper she talks of campaigns and cavalry charges with shining eyes, then goes quiet. "...it\'s nice," she admits, "talking to someone who doesn\'t want anything from the Takeda. Just... me."'),
+          H('You walk her back under a spray of stars. At her door she squeezes your hand hard. "Tomorrow," she says, "we ride again. Don\'t be late."'),
+        ],
+        effects: [{ flag: ['aff_yu', true] }, { bond: 2 }, { exp: 20 }, { karma: 1 }],
+      },
+      {
+        id: 'night', label: '🌙 Share a night with Yū 🔞',
+        need: (s) => s.world.flags.aff_yu && !s.world.flags.lover_yu,
+        beats: (s) => [
+          N('Yū meets you at the stables at dusk, alone, her hair still damp from the bath. "No servants tonight," she says, taking your hand. "Just us. I\'ve been thinking about this all day — don\'t make me wait any longer."'),
+          A('In the hayloft above the sleeping horses she is all fierce grace — strong, eager, laughing breathlessly as she pulls you down into the straw. "Like a cavalry charge," she gasps. "No retreat!"'),
+          H('She loves the way she rides: all-in, fearless, laughing. Afterwards you lie tangled in the straw while the horses shift below, and she traces old scars on your arms with reverent fingers. "Warriors," she whispers. "Both of us."'),
+        ],
+        effects: [{ flag: ['lover_yu', true] }, { bond: 3 }, { exp: 40 }, { heal: 20 }, { memory: ['princess_yu', 'note', 'Lovers — fierce as fire'] }],
+      },
+      {
+        id: 'lover', label: '🌅 Visit your lover Yū',
+        need: (s) => s.world.flags.lover_yu && s.world.flags.lovday_yu !== dateKey(s),
+        beats: (s) => [
+          N('Yū spots you across the courtyard and her whole face transforms — the warrior melts into a young woman in love. She runs to you, uncaring who sees.'),
+        ],
+        choices: [
+          {
+            label: '🌙 A passionate night 🔞',
+            beats: (s) => [
+              H('The hayloft again — or her chambers when the castle sleeps. Either way she is fire and laughter, demanding and generous in equal measure, until you both collapse, spent and grinning, into each other\'s arms.'),
+            ],
+            effects: [{ flag: ['lovday_yu', 'TODAY'] }, { bond: 1 }, { exp: 30 }, { heal: 30 }],
+          },
+          {
+            label: '🐎 A moonlit ride together',
+            beats: (s) => [
+              N('You ride out under the moon, just the two of you, hooves muffled on the grass. She talks about everything and nothing, and the world feels very far away.'),
+            ],
+            effects: [{ flag: ['lovday_yu', 'TODAY'] }, { bond: 1 }, { exp: 15 }],
+          },
+        ],
+      },
+    ],
+  },
+
+  princess_setsu: {
+    name: 'Princess Setsu', archetype: 'princess', portrait: 'npc_princess_setsu.png',
+    sceneCg: 'cg_garden_moon.png',
+    adult: true, desc: 'A daughter of the Uesugi, in white and blue — serene as temple snow, with hidden depths.',
+    greet: [
+      [A('Princess Setsu is arranging flowers when you enter, and does not look up until the last stem is perfect. "Forgive me," she says softly. "Beauty deserves patience. ...You may sit."')],
+      [A('You find Setsu at the shrine, praying before the image of Bishamonten. She finishes, bows, and turns to you with a smile like moonrise. "The god of war watches over our house. Perhaps he watches over you too, onmyoji."')],
+    ],
+    topics: [
+      {
+        id: 'uesugi', label: 'Ask about the Uesugi', beats: (s) => [
+          N('"My father is the avatar of Bishamonten," Setsu says — not boastfully, but as one stating the weather. "He fights not for land but for righteousness. The realm calls him the Dragon of Echigo."'),
+          A('A shadow crosses her serenity. "Righteousness is a heavy armor to wear. Sometimes I wish... no. Forgive me. A princess does not wish aloud."'),
+        ],
+      },
+      {
+        id: 'evening', label: '💗 Spend an evening with Setsu',
+        need: (s) => !s.world.flags.aff_setsu,
+        beats: (s) => [
+          N('You find Setsu alone in the moon-viewing garden, and she does not send you away. You sit in companionable silence a long while, watching the moon on the pond. "No one is ever just... quiet with me," she says at last. "Thank you."'),
+          A('She talks then — of duty, of the weight of a famous name, of poems she writes and burns. When the moon is high she takes your hand, almost shyly. "I\'m glad the god of war sent you to Echigo. Even if he didn\'t — I\'m glad."'),
+          H('You walk her back in silence that feels like music. At her door she bows — formal, perfect — but her fingers linger on yours a heartbeat too long.'),
+        ],
+        effects: [{ flag: ['aff_setsu', true] }, { bond: 2 }, { exp: 20 }, { karma: 1 }],
+      },
+      {
+        id: 'night', label: '🌙 Share a night with Setsu 🔞',
+        need: (s) => s.world.flags.aff_setsu && !s.world.flags.lover_setsu,
+        beats: (s) => [
+          N('Setsu comes to the garden at midnight, as arranged — no attendants, her hair unbound for the first time you\'ve seen it. "I prayed about this," she confesses, breathless. "Bishamonten did not object. ...Or if he did, I have decided not to listen."'),
+          A('On the veranda above the moonlit pond she unfolds like one of her flowers — slowly, then all at once, trembling and radiant. "Gently," she whispers. "I\'ve never— gently, please, and don\'t stop holding me."'),
+          H('You are gentle. And then, as her trust blooms into wonder and wonder into abandon, you are everything she needs. Afterwards she weeps a little — happy tears, she insists — and clings to you under the indifferent moon. "I\'m not sorry," she whispers fiercely. "I\'m not sorry at all."'),
+        ],
+        effects: [{ flag: ['lover_setsu', true] }, { bond: 3 }, { exp: 40 }, { heal: 20 }, { memory: ['princess_setsu', 'note', 'Lovers — moonlit and tender'] }],
+      },
+      {
+        id: 'lover', label: '🌅 Visit your lover Setsu',
+        need: (s) => s.world.flags.lover_setsu && s.world.flags.lovday_setsu !== dateKey(s),
+        beats: (s) => [
+          N('Setsu\'s composure cracks the moment she sees you — the serene princess becomes, for one unguarded instant, simply a young woman in love. She recovers, bows, and murmurs: "Walk with me?"'),
+        ],
+        choices: [
+          {
+            label: '🌙 A tender night 🔞',
+            beats: (s) => [
+              H('The moon-viewing veranda, the pond silver below. She comes to you trustingly now, and what follows is tender and unhurried and deep — two people who have learned exactly how to cherish each other. She falls asleep in your arms, smiling.'),
+            ],
+            effects: [{ flag: ['lovday_setsu', 'TODAY'] }, { bond: 1 }, { exp: 30 }, { heal: 30 }],
+          },
+          {
+            label: '🌸 Arrange flowers together',
+            beats: (s) => [
+              N('You help her arrange flowers — badly. She laughs, a sound like temple bells, and guides your hands. "Patience," she teases. "Beauty deserves it. So do you."'),
+            ],
+            effects: [{ flag: ['lovday_setsu', 'TODAY'] }, { bond: 1 }, { exp: 15 }],
+          },
+        ],
+      },
+    ],
+  },
 };
+
+// ---------------------------------------------------------------------------
+// Interactive H-scenes (Dragon Knight 4 flavor) for adult NPCs only.
+// Tasteful CG art + clickable hotspots; the explicit content lives in the
+// text. Aiko and all minors/ambiguous-age characters are excluded.
+for (const [id, npc] of Object.entries(NPCS)) {
+  if (!npc.adult) continue;
+  npc.topics.push({
+    id: 'hscene',
+    label: '🌙 Interactive night together 🔞',
+    need: (s) => !!s.world.flags['lover_' + id],
+    beats: () => [],
+    effects: [{ scene: ['night_together', id] }],
+  });
+}
 
 export function npcsAt(s, locId) {
   return Object.entries(NPCS)
