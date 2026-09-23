@@ -1,1122 +1,474 @@
-// main.js — Aiko Onmyoji: Sengoku Spirits (historical sandbox edition).
-// Screen router + all screens. No build step, no external libraries.
-// Time moves slowly: audiences take hours, missions and travel take days,
-// and real history (1570–1590) unfolds on its actual dates.
-
+// main.js — Aiko Onmyoji: tile-walk edition.
+// Canvas overworld, click/arrow movement, sprite NPCs, Aiko chat sidebar,
+// command bar, quick actions, topic browser, and action choreography.
 import * as St from './state.js';
-import * as MapX from './map.js';
-import * as Combat from './combat.js';
+import * as TM from './tilemaps.js';
+import * as Spr from './sprites.js';
 import * as DLG from './dialogue.js';
-import * as Aiko from './aiko.js';
+import * as Chat from './chat.js';
+import * as Act from './actions.js';
 import * as Quests from './quests.js';
-import * as History from './history.js';
-import * as Factions from './factions.js';
-import * as Link from './aiko_link.js';
-import * as Explore from './explore.js';
-import * as Scenes from './scenes.js';
+import { World, TILE_PX } from './engine.js';
 
-// ---- wire cross-module hooks (factions <-> history) ----
-History.setFactionName((fid) => Factions.factionDisplayName(S, fid));
-History.setFactionHooks({
-  changeStrength: (s, fid, d) => Factions.changeStrength(s, fid, d),
-  destroyFaction: (s, fid) => Factions.destroyFaction(s, fid),
-  discoverLoc: (s, loc) => St.discover(s, loc),
-  odaRename: (s) => St.addNews(s, '📜 The Oda banners now fly for Hashiba Hideyoshi. Men begin to whisper "Toyotomi."'),
-});
-History.setImpactHooks({
-  addFame: (s, n) => St.addFame(s, n),
-  addExp: (s, n) => St.addExp(s, n),
-});
-Factions.setGiftHooks({ removeItem: (s, id, q) => St.removeItem(s, id, q) });
-St.setStipendTable(Factions.STIPEND);
-
-const app = document.getElementById('app');
-let S = null;
-let screen = 'title';
-let combat = null;
-let combatPhase = 'menu';
-let combatReturn = 'location';
-let combatNotes = [];
-let dlg = null;
-let hscene = null; // interactive H-scene state {sceneId, npcId, stageIdx, touches, seen, log}
-let pendingMsg = '';
-let pendingNews = [];
-let officerLabel = null;
-let missionList = [];
-
-// ---------------------------------------------------------------- helpers
+const $ = (id) => document.getElementById(id);
 const esc = (t) => String(t).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
-function portrait(src, fallback, cls = 'portrait') {
-  return `<span class="${cls}"><img src="assets/${esc(src)}" alt="" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'"><span class="pfallback" style="display:none">${fallback}</span></span>`;
+let S = null, world = null, brain = new Chat.AikoBrain();
+let selectedNpc = null; // npcId
+let lastEvent = '';
+let pendingAfterMove = null;
+let aikoMood = 'happy';
+
+// ---------------- boot ----------------
+function boot() {
+  const cv = $('stage');
+  sizeCanvas(cv);
+  window.addEventListener('resize', () => sizeCanvas(cv));
+  const loaded = St.loadGame();
+  if (loaded) { S = loaded; startGame(false); }
+  else showTitle(cv);
 }
-function bgStyle(file) { return `background-image:url('assets/${esc(file)}')`; }
-function karmaLabel() {
-  const t = St.karmaTier(S.player.karma);
-  const icon = { benevolent: '🌸', kind: '🍃', neutral: '⚖️', harsh: '🌪️', ruthless: '💀' }[t];
-  return `${icon} ${t} (${S.player.karma})`;
+function sizeCanvas(cv) {
+  const r = cv.parentElement.getBoundingClientRect();
+  const w = Math.min(768, r.width - 8), h = Math.min(576, r.height - 8);
+  cv.width = Math.max(480, Math.floor(w / 4) * 4);
+  cv.height = Math.max(360, Math.floor(h / 4) * 4);
 }
-function serviceLabel() {
-  const f = S.world.service.faction;
-  if (!f) return '🌊 rōnin (free)';
-  return `🏯 ${esc(Factions.factionDisplayName(S, f))} ${esc(Factions.rankName(S))}`;
+function showTitle(cv) {
+  const ctx = cv.getContext('2d');
+  ctx.fillStyle = '#0d0b1c'; ctx.fillRect(0, 0, cv.width, cv.height);
+  openPanel(`<h3>🦊 Aiko Onmyoji: Sengoku Spirits</h3>
+    <p>1570, the Sengoku era. You are an onmyoji walking the roads of Japan with Aiko, your fox-spirit shikigami.</p>
+    <p>Move with <b>arrow keys / WASD</b> or <b>click a tile</b>. Talk to Aiko on the right. Type commands below.</p>
+    <div class="btn-row"><button id="t-new">✨ New game</button>
+    ${St.hasSave() ? '<button id="t-cont">📂 Continue</button>' : ''}</div>`);
+  $('t-new').onclick = () => { S = St.newGame('Onmyoji'); St.saveGame(S); startGame(true); };
+  const tc = $('t-cont'); if (tc) tc.onclick = () => { S = St.loadGame(); startGame(false); };
 }
-function bar(cur, max, cls) {
-  const pct = Math.max(0, Math.min(100, Math.round(cur / max * 100)));
-  return `<div class="bar"><div class="fill ${cls}" style="width:${pct}%"></div><span>${cur}/${max}</span></div>`;
+function startGame(fresh) {
+  closePanel();
+  world = new World($('stage'), S, {
+    toast, onWarp: doWarp, onBumpDoor: doorBump,
+    onChoreoBeat: choreoBeatPanel,
+  });
+  world.loadLocation(S.player.location || 'azuchi');
+  drawAikoFace();
+  say('sys', fresh ? 'A new journey begins. Aiko stretches her tails. "Let\'s go, master!"' : `Welcome back. You stand in ${world.map.name}.`);
+  aikoSay(brain.respond('hello', brainCtx()).text, 'happy');
+  loop(0);
+  updateHud();
+  buildQuickActions();
 }
-function speakerInfo(who) {
-  if (who === 'n') return { name: '', port: '' };
-  if (who === 'h') return { name: S.player.name, port: portrait('hero_onmyoji.png', '🧙') };
-  if (who === 'a') return { name: 'Aiko', port: portrait('aiko_shikigami.png', '🦊') };
-  if (who === 'daimyo' && dlg && dlg.npc) {
-    const p = DLG.npcPortraitFor(dlg.npc);
-    return { name: dlg.npc.name, port: portrait(p.portrait, p.fallback) };
-  }
-  const npc = DLG.NPCS[who];
-  if (!npc) return { name: who, port: '' };
-  const p = DLG.npcPortraitFor(npc);
-  return { name: npc.name, port: portrait(p.portrait, p.fallback) };
-}
-function factionsHere() {
-  return Object.keys(Factions.FACTIONS).filter((fid) =>
-    Factions.factionActive(S, fid) && Factions.factionCapital(S, fid) === S.player.location);
-}
-function pushNews(news) { if (news && news.length) pendingNews.push(...news); }
-function tidingsHtml(n = 4) {
-  const news = St.recentNews(S, n);
-  if (!news.length) return '';
-  return `<div class="tidings"><h3>📯 Tidings of the realm</h3>${news.map((x) =>
-    `<p><small>${esc(x.d)}</small><br>${esc(x.text)}</p>`).join('')}</div>`;
+let lastT = 0;
+function loop(t) {
+  const dt = Math.min(0.05, (t - lastT) / 1000 || 0.016); lastT = t;
+  world.update(dt);
+  world.render();
+  if (pendingAfterMove && pendingAfterMove.check()) { const d = pendingAfterMove.done; pendingAfterMove = null; if (d) d(); }
+  requestAnimationFrame(loop);
 }
 
-// ---------------------------------------------------------------- effects
+// ---------------- input ----------------
+const KEYMAP = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right', w: 'up', s: 'down', a: 'left', d: 'right', W: 'up', S: 'down', A: 'left', D: 'right' };
+document.addEventListener('keydown', (e) => {
+  if (!world) return;
+  if (document.activeElement && /INPUT/.test(document.activeElement.tagName)) return;
+  const d = KEYMAP[e.key];
+  if (d) { world.keys[d] = true; e.preventDefault(); }
+  if (e.key === 'e' || e.key === 'E') openNpcPanel((selectedNpc && world.npcById(selectedNpc)) || world.nearestNpc(2));
+  if (e.key === ' ') { if (world.choreo) world.choreoSkip(); e.preventDefault(); }
+});
+document.addEventListener('keyup', (e) => { const d = KEYMAP[e.key]; if (d && world) world.keys[d] = false; });
+document.addEventListener('click', (e) => {
+  if (!world) return;
+  if (e.target.closest('#dpad')) { const d = e.target.dataset.dir; if (d) stepOnce(d); return; }
+  if (e.target.id === 'stage') {
+    const [tx, ty] = world.screenToTile(e.clientX, e.clientY);
+    const npc = world.npcAt(tx, ty);
+    if (npc) { selectNpc(npc.id); openNpcPanel(npc); return; }
+    if (world.choreo) { world.choreoSkip(); return; }
+    const mover = world.possessed ? world.npcById(world.possessed) : world.player;
+    const path = TM.findPath(world.map, mover.x, mover.y, tx, ty, S, false);
+    if (path.length) { world.queuePath(path); }
+    else toast('Can\'t get there.');
+  }
+});
+function stepOnce(d) {
+  const v = { up: [0, -1], down: [0, 1], left: [-1, 0], right: [1, 0] }[d];
+  world.tryStep(v[0], v[1]);
+}
+
+// ---------------- HUD / toast / chat ----------------
+function updateHud() {
+  $('hud-loc').textContent = '📍 ' + (world ? world.map.name : '—');
+  $('hud-date').textContent = '📅 ' + St.dateLabel(S);
+  $('hud-gold').textContent = '🪙 ' + S.player.gold;
+  $('hud-karma').textContent = '⚖️ ' + St.karmaTier(S.player.karma);
+  $('hud-hp').textContent = `❤️ ${S.player.hp}/${S.player.maxHp}`;
+}
+let toastT = null;
+function toast(msg) {
+  const el = $('toast'); el.textContent = msg; el.classList.add('show');
+  clearTimeout(toastT); toastT = setTimeout(() => el.classList.remove('show'), 2600);
+}
+function say(cls, text, who) {
+  const log = $('chatlog');
+  const d = document.createElement('div');
+  d.className = 'msg ' + cls;
+  d.innerHTML = cls === 'aiko' ? `<b>🦊 Aiko:</b> ${esc(text)}` : cls === 'me' ? esc(text) : esc(text);
+  log.appendChild(d); log.scrollTop = log.scrollHeight;
+}
+function aikoSay(text, mood) {
+  aikoMood = mood || 'happy';
+  say('aiko', text); drawAikoFace();
+  $('aiko-mood').textContent = { happy: 'cheerful', sad: 'down', angry: 'huffy', surprised: 'startled', love: 'smitten', neutral: 'your shikigami' }[aikoMood] || 'your shikigami';
+}
+function drawAikoFace() {
+  const c = $('aiko-face'), x = c.getContext('2d');
+  x.imageSmoothingEnabled = false; x.clearRect(0, 0, 96, 96);
+  Spr.drawAikoFace(x, 0, 0, 96, aikoMood);
+}
+function brainCtx() {
+  const mem = S.world.aikoMem || (S.world.aikoMem = {});
+  return {
+    S, nearby: world.npcs.map(n => ({ id: n.id, name: n.rec.name })),
+    locationName: world.map.name, lastEvent,
+    npcInfo: (id) => { const n = DLG.NPCS[id]; return n ? `${n.name} — ${n.desc || ''}` : null; },
+    saveMem: (k, v) => { mem[k] = v; St.saveGame(S); },
+    getMem: (k) => mem[k],
+  };
+}
+$('chatinput').addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter' || !world) return;
+  const t = e.target.value.trim(); e.target.value = '';
+  if (!t) return;
+  say('me', t);
+  const r = brain.respond(t, brainCtx());
+  setTimeout(() => aikoSay(r.text, r.mood), 350);
+});
+
+// ---------------- command bar ----------------
+$('btn-cmd').onclick = runCommand;
+$('cmdinput').addEventListener('keydown', (e) => { if (e.key === 'Enter') runCommand(); });
+function runCommand() {
+  if (!world) return;
+  const t = $('cmdinput').value.trim(); $('cmdinput').value = '';
+  if (!t) return;
+  say('me', '❯ ' + t);
+  const ctx = { S, nearby: world.npcs.map(n => ({ id: n.id, name: n.rec.name })) };
+  const it = Chat.parseCommand(t, ctx);
+  execIntent(it, t);
+}
+function findNpcRef(target) {
+  if (!target) return (selectedNpc && world.npcById(selectedNpc)) || world.nearestNpc(3);
+  const low = target.toLowerCase();
+  return world.npcs.find(n => n.id.toLowerCase().includes(low) || n.rec.name.toLowerCase().includes(low)) || null;
+}
+function execIntent(it, raw) {
+  switch (it.type) {
+    case 'chat': { const r = brain.respond(raw, brainCtx()); setTimeout(() => aikoSay(r.text, r.mood), 300); break; }
+    case 'move': {
+      const v = { up: [0, -1], down: [0, 1], left: [-1, 0], right: [1, 0] }[it.dir];
+      const mover = world.possessed ? world.npcById(world.possessed) : world.player;
+      const path = TM.findPath(world.map, mover.x, mover.y, mover.x + v[0] * it.steps, mover.y + v[1] * it.steps, S, false);
+      if (path.length) world.queuePath(path); else toast('Blocked.');
+      break;
+    }
+    case 'goto': {
+      const npc = findNpcRef(it.target);
+      if (npc) { walkAdjacent(npc, () => { selectNpc(npc.id); openNpcPanel(npc); }); break; }
+      const w = (world.map.warps || []).find(x => x.label.toLowerCase().includes((it.target || '').toLowerCase()));
+      if (w) { const p = world.player; const path = TM.findPath(world.map, p.x, p.y, w.x, w.y, S, false); if (path.length) world.queuePath(path); }
+      else toast('No such person or road here.');
+      break;
+    }
+    case 'warp': {
+      const w = (world.map.warps || []).find(x => x.to === it.to || x.label.toLowerCase().includes((it.to || '').toLowerCase()));
+      if (w) doWarp(w); else toast('No road there from here.');
+      break;
+    }
+    case 'action': doQuickAction(it.action, findNpcRef(it.target)); break;
+    case 'sex': doSexIntent(findNpcRef(it.target), it.template, it.force); break;
+    case 'aiko': doAiko(it.sub, it.target); break;
+    case 'door': {
+      const d = (world.map.lockedDoors || []).find(x => Math.abs(x.x - world.player.x) + Math.abs(x.y - world.player.y) <= 3);
+      if (!d) { toast('No locked door nearby.'); break; }
+      St.setFlag(S, d.flag, true); St.saveGame(S); updateHud();
+      toast(`🔓 ${d.name} unlocked.`); lastEvent = 'unlocked ' + d.name;
+      break;
+    }
+    case 'status':
+      say('sys', `${S.player.name} — Lv${S.player.level} ❤️${S.player.hp}/${S.player.maxHp} 🪙${S.player.gold} ⚖️${St.karmaTier(S.player.karma)} 📍${world.map.name} 📅${St.dateLabel(S)}`);
+      break;
+    case 'help':
+      say('sys', 'Commands: go north/south/east/west · talk to <name> · kiss <name> · shake hands · attack <name> · sleep with <name> · aiko fly/land/hide · possess <name> · release · open door · go to <place> · where am i');
+      break;
+    default: say('sys', it.hint || "Hmm? Try 'help'.");
+  }
+}
+let walkToken = 0;
+function walkAdjacent(npc, fn) {
+  const p = world.player;
+  const token = ++walkToken;
+  let tries = 0;
+  const go = () => {
+    if (token !== walkToken) return true; // superseded
+    if (Math.abs(npc.x - p.x) + Math.abs(npc.y - p.y) <= 1) { fn(); return true; }
+    if (++tries > 5) { toast("Can't reach them — they moved away."); return true; }
+    let best = null;
+    for (const [dx, dy] of [[0, 1], [0, -1], [1, 0], [-1, 0]]) {
+      const path = TM.findPath(world.map, p.x, p.y, npc.x + dx, npc.y + dy, S, false);
+      if (path.length && (!best || path.length < best.length)) best = path;
+    }
+    if (!best) { toast("Can't reach them."); return true; }
+    world.queuePath(best);
+    return false;
+  };
+  if (go()) return;
+  pendingAfterMove = { check: () => !world.path.length && go(), done: null };
+  setTimeout(() => { if (pendingAfterMove && token === walkToken) { pendingAfterMove = null; walkToken++; } }, 20000);
+}
+
+// ---------------- NPC panel ----------------
+function selectNpc(id) { selectedNpc = id; }
+function npcShape(n) { return { id: n.id, ...n.rec }; }
+function openNpcPanel(n) {
+  if (!n) return;
+  selectNpc(n.id);
+  const rec = n.rec;
+  const near = world.npcs.filter(x => x.id !== n.id && Math.abs(x.x - n.x) + Math.abs(x.y - n.y) <= 4).map(x => x.rec.name);
+  openPanel(`<button class="close-x" id="p-x">✕</button>
+    <h3>${esc(rec.name)}</h3><p>${esc(rec.desc || '')}</p>
+    ${near.length ? `<p><small>Nearby: ${esc(near.join(', '))}</small></p>` : ''}
+    <div class="btn-row" id="p-actions"></div>
+    <div class="btn-row"><button id="p-talk">💬 Talk (topics)</button></div>
+    <div class="beats" id="p-beats"></div>`);
+  $('p-x').onclick = closePanel;
+  const row = $('p-actions');
+  for (const a of Act.QUICK_ACTIONS) {
+    if (a.id === 'talk') continue;
+    const b = document.createElement('button');
+    b.className = 'qbtn'; b.textContent = a.label;
+    b.onclick = () => doQuickAction(a.id, n);
+    row.appendChild(b);
+  }
+  $('p-talk').onclick = () => openTopics(n);
+}
+function doQuickAction(actionId, n) {
+  if (!n) { toast('No one selected — click a person first.'); return; }
+  if (actionId === 'talk') { walkAdjacent(n, () => openTopics(n)); return; }
+  const qa = Act.quickActionById(actionId);
+  const shape = npcShape(n);
+  const ok = qa.allowed(shape, S);
+  if (ok !== true) { toast(typeof ok === 'string' ? ok : 'Can\'t do that now.'); return; }
+  if (actionId === 'sex') { doSexIntent(n, null, false); return; }
+  walkAdjacent(n, () => {
+    n.facing = n.x < world.player.x ? 'right' : n.x > world.player.x ? 'left' : n.y < world.player.y ? 'down' : 'up';
+    const beats = Act.actSequence(actionId, shape, S);
+    if (actionId === 'fight') {
+      const last = beats[beats.length - 1];
+      if (last.outcome === 'win') { St.addExp(S, 30); St.addGold(S, St.rand(5, 20)); }
+      else { St.damagePlayer(S, 15); }
+      updateHud();
+    }
+    playBeats(beats, { self: {}, [n.id]: {} }, n.rec.name, () => {
+      lastEvent = `${actionId} with ${n.rec.name}`;
+      if (actionId === 'kiss') aikoSay(brain.respond(`i kissed ${n.rec.name}`, brainCtx()).text, 'love');
+    });
+  });
+}
+function playBeats(beats, actors, title, onDone) {
+  openPanel(`<button class="close-x" id="p-x">✕</button><h3>${esc(title)}</h3>
+    <div class="beats" id="p-beats"></div>
+    <div class="btn-row"><button id="p-skip">⏩ Skip</button></div>`);
+  $('p-x').onclick = () => { world.choreo = null; closePanel(); };
+  $('p-skip').onclick = () => world.choreoSkip();
+  const box = $('p-beats');
+  world.playChoreo(beats, actors, () => { if (onDone) onDone(); });
+  world.hooks.onChoreoBeat = (b, i, len) => {
+    box.innerHTML = `<p>${esc(b.text || '')}</p><small>${i + 1}/${len} — click the scene or press Space to hurry</small>`;
+  };
+}
+function choreoBeatPanel(b, i, len) {
+  const box = $('p-beats');
+  if (box && !$('panel').classList.contains('hidden')) box.innerHTML = `<p>${esc(b.text || '')}</p><small>${i + 1}/${len}</small>`;
+}
+
+// ---------------- topic browser (reuses dialogue.js content) ----------------
+function openTopics(n) {
+  const topics = n.rec.topics.filter(t => !t.need || t.need(S));
+  openPanel(`<button class="close-x" id="p-x">✕</button><h3>💬 ${esc(n.rec.name)}</h3>
+    <div class="btn-row">${topics.map(t => `<button data-t="${esc(t.id)}">${esc(t.label)}</button>`).join('')}</div>
+    <div class="beats" id="p-beats"></div>`);
+  $('p-x').onclick = () => openNpcPanel(n);
+  $('panel').querySelectorAll('[data-t]').forEach(b => b.onclick = () => runTopic(n, b.dataset.t));
+}
+function runTopic(n, tid) {
+  const t = n.rec.topics.find(x => x.id === tid);
+  if (!t || (t.need && !t.need(S))) return;
+  if (tid === 'hscene') { doSexIntent(n, null, false); return; }
+  const box = $('p-beats');
+  const notes = applyEffects(t.effects);
+  const beats = typeof t.beats === 'function' ? t.beats(S) : t.beats;
+  let i = 0;
+  const show = () => {
+    if (i >= beats.length) {
+      if (t.choices) {
+        box.innerHTML += `<div class="btn-row">${t.choices.filter(c => !c.need || c.need(S)).map((c, ci) => `<button data-c="${ci}">${esc(c.label)}</button>`).join('')}</div>`;
+        box.querySelectorAll('[data-c]').forEach(b => b.onclick = () => {
+          const c = t.choices[+b.dataset.c];
+          const n2 = applyEffects(c.effects);
+          const cb = typeof c.beats === 'function' ? c.beats(S) : c.beats;
+          box.innerHTML = cb.map(x => `<p>${esc(beatText(x))}</p>`).join('') + (n2.length ? `<p><small>${esc(n2.join(' · '))}</small></p>` : '');
+        });
+      }
+      updateHud(); St.saveGame(S);
+      return;
+    }
+    box.innerHTML = `<p>${esc(beatText(beats[i]))}</p>` + (notes.length && i === 0 ? `<p><small>${esc(notes.join(' · '))}</small></p>` : '') + `<div class="btn-row"><button id="b-next">▼ Continue</button></div>`;
+    $('b-next').onclick = () => { i++; show(); };
+  };
+  show();
+}
+function beatText(b) { return typeof b === 'string' ? b : (b.text || ''); }
 function applyEffects(effects) {
   const notes = [];
   for (const ef of effects || []) {
-    if (ef.karma) {
-      const r = St.addKarma(S, ef.karma);
-      const react = Aiko.reactToKarma(S, ef.karma);
-      notes.push(`Karma ${ef.karma > 0 ? '+' : ''}${ef.karma} → ${r.tier} (${r.now})`);
-      if (react) notes.push('🦊 Aiko: “' + react + '”');
-    }
-    if (ef.gold) { St.addGold(S, ef.gold); notes.push(`Gold ${ef.gold > 0 ? '+' : ''}${ef.gold} (now ${S.player.gold})`); }
-    if (ef.exp) { const r = St.addExp(S, ef.exp); notes.push(`+${ef.exp} EXP${r.leveled ? ` — LEVEL UP! Now level ${S.player.level}` : ''}`); }
-    if (ef.bond) {
-      const r = St.bondChange(S, ef.bond, 'event');
-      notes.push(`Aiko's bond ${ef.bond > 0 ? '+' : ''}${ef.bond} (now ${r.now})`);
-    }
-    if (ef.heal) { St.healPlayer(S, ef.heal); notes.push(`Restored ${ef.heal} HP.`); }
-    if (ef.item) {
-      const [id, qty] = ef.item;
-      if (qty < 0) St.removeItem(S, id, -qty); else St.addItem(S, id, qty);
-      notes.push(`${qty < 0 ? 'Used' : 'Gained'}: ${St.ITEMS[id] ? St.ITEMS[id].name : id}${Math.abs(qty) > 1 ? ' ×' + Math.abs(qty) : ''}`);
-    }
-    if (ef.flag) {
-      let [k, v] = ef.flag;
-      if (v === 'TODAY') v = St.dateKey(S);
-      St.setFlag(S, k, v);
-    }
-    if (ef.quest) { Quests.setQuestStage(S, ef.quest[0], ef.quest[1]); notes.push(`📜 Quest updated: ${Quests.QUESTS[ef.quest[0]].title}`); }
-    if (ef.qchoice) { Quests.setQuestChoice(S, ef.qchoice[0], ef.qchoice[1]); }
-    if (ef.memory) { St.rememberNpc(S, ef.memory[0], ef.memory[1], ef.memory[2]); }
-    if (ef.discover) { St.discover(S, ef.discover); notes.push(`🗺 New location discovered: ${MapX.locationName(ef.discover)}`); }
-    if (ef.aiko) { const line = Aiko.onEvent(S, ef.aiko); if (line) notes.push('🦊 Aiko: “' + line + '”'); }
-    if (ef.combat) { startCombat(ef.combat === 'officer' ? Combat.officerFor(S, officerLabel) : ef.combat, 'dialogue'); return { notes, combat: true }; }
-    if (ef.scene) { startScene(ef.scene[0], ef.scene[1]); return { notes, scene: true }; }
+    if (ef.karma) { const r = St.addKarma(S, ef.karma); notes.push(`Karma ${ef.karma > 0 ? '+' : ''}${ef.karma} → ${r.tier}`); }
+    if (ef.gold) { St.addGold(S, ef.gold); notes.push(`Gold ${ef.gold > 0 ? '+' : ''}${ef.gold}`); }
+    if (ef.exp) { const r = St.addExp(S, ef.exp); notes.push(`+${ef.exp} EXP${r.leveled ? ' — LEVEL UP!' : ''}`); }
+    if (ef.bond) { const r = St.bondChange(S, ef.bond, 'event'); notes.push(`Aiko's bond ${ef.bond > 0 ? '+' : ''}${ef.bond} (${r.now})`); }
+    if (ef.heal) { St.healPlayer(S, ef.heal); notes.push(`+${ef.heal} HP`); }
+    if (ef.item) { const [id, q] = ef.item; if (q < 0) St.removeItem(S, id, -q); else St.addItem(S, id, q); notes.push(`${q < 0 ? 'Used' : 'Got'} ${(St.ITEMS[id] || {}).name || id}`); }
+    if (ef.flag) { let [k, v] = ef.flag; if (v === 'TODAY') v = St.dateKey(S); St.setFlag(S, k, v); }
+    if (ef.memory) { const [a, b2, c] = ef.memory; St.rememberNpc(S, a, b2, c); }
+    if (ef.quest) { try { Quests.setQuestStage(S, ef.quest[0], ef.quest[1]); notes.push('📜 Quest updated'); } catch {} }
   }
-  return { notes };
+  return notes;
 }
 
-// ---------------------------------------------------------------- top bar
-function topbar() {
-  if (!S || screen === 'title' || screen === 'ending') return '';
-  return `<div id="topbar">
-    <span class="tb"><b>${esc(S.player.name)}</b> Lv${S.player.level}</span>
-    <span class="tb">❤ ${S.player.hp}/${S.player.maxHp}</span>
-    <span class="tb">🔮 ${S.player.rei}/${S.player.maxRei}</span>
-    <span class="tb">💰 ${S.player.gold}</span>
-    <span class="tb">⭐ ${S.player.fame}</span>
-    <span class="tb">${serviceLabel()}</span>
-    <span class="tb">${karmaLabel()}</span>
-    <span class="tb">🦊 ${S.aiko.bond}</span>
-    <span class="tb">📅 ${esc(St.dateLabel(S))}</span>
-    <span class="tb">📍 ${esc(MapX.getLocation(S.player.location).name)}</span>
-    <button class="btn small" data-act="save">Save</button>
-    <button class="btn small" data-act="status">Status</button>
-    <button class="btn small" data-act="whisper">🦊 Whisper <span id="wh-dot" class="dot">●</span></button>
-  </div>`;
-}
-
-// ---------------------------------------------------------------- TITLE
-function renderTitle() {
-  const has = St.hasSave();
-  return `
-  <div class="screen title-screen" style="${bgStyle('bg_kyoto.png')}">
-    <div class="title-card">
-      <div class="jp-title">アイコ陰陽師</div>
-      <h1>Aiko Onmyoji:<br>Sengoku Spirits</h1>
-      <p class="tagline">Japan, 1570. Nobunaga rises, the Takeda ride, and history marches on its real dates —<br>
-      whether you shape it or merely survive it. <b>No script. No chosen one.</b> Your story is yours.</p>
-      <div class="title-form">
-        <input id="pname" maxlength="16" placeholder="Your name, onmyoji…" value="">
-        <button class="btn big" data-act="new">⚔ Begin in the 6th month, 1570</button>
-        ${has ? `<button class="btn big ghost" data-act="continue">📜 Continue</button>` : ''}
-      </div>
-      <button class="btn small ghost" data-act="howto">How to play</button>
-      <div id="howto" class="howto hidden">
-        <p>📅 <b>Time flows slowly</b> — audiences take hours, travel and missions take days. History fires on its real dates (1570–1590).</p>
-        <p>👑 <b>Meet the daimyo</b> — Nobunaga, Shingen, Kenshin, Ieyasu and more. Request audiences, pledge service, take missions, earn ranks.</p>
-        <p>⚔ <b>Join real battles</b> — Anegawa, Mikatagahara, Nagashino, Tedorigawa. Fight well enough and you can <b>change history</b>.</p>
-        <p>💬 <b>Talk</b> to samurai, nobles, merchants, kappa, and ghosts — each speaks in their own style.</p>
-        <p>⚔ <b>Fight</b> turn-based battles. Weaken foes, then <b>SPARE</b> or <b>FINISH</b> them — karma remembers.</p>
-        <p>🦊 <b>Aiko</b> fights beside you and comments on the flow of history. Her bond shapes her banter.</p>
-        <p>🖱 <b>Explore</b> each place point-and-click style — click the buildings, people and gates to act.</p>
-        <p>🦊 <b>Whisper</b> to Aiko mind-to-mind from the top bar — no one else can hear. When the Aiko-chan link is live, the real Aiko answers, and you can ask her to make things happen.</p>
-        <p>🌊 <b>Do anything</b> — serve a lord faithfully, betray him, get rich, or wander free. The realm keeps score.</p>
-      </div>
-      <p class="fine">An original historical sandbox — all content strictly non-explicit.</p>
-    </div>
-  </div>`;
-}
-
-// ---------------------------------------------------------------- MAP
-function renderMap() {
-  const here = MapX.getLocation(S.player.location);
-  const dests = MapX.availableDestinations(S);
-  return `
-  <div class="screen">
-    <h2>🗺 Travel — ${esc(here.name)} <span class="jp">${esc(here.jp)}</span></h2>
-    <p class="flavor">${esc(here.desc)}</p>
-    <p class="flavor">🦊 <i>“${esc(Aiko.aikoLine(S, { situation: 'lore' }))}”</i></p>
-    <h3>Roads from here (days on the road)</h3>
-    <div class="btn-grid">
-      ${dests.map(d => `<button class="btn" data-act="travel" data-id="${d.id}">→ ${esc(d.name)} <span class="jp">${esc(d.jp)}</span> <small>(${d.days}d)</small>${d.danger ? ' ' + '☠'.repeat(d.danger) : ''}</button>`).join('')}
-    </div>
-    <h3>Known lands</h3>
-    <p class="flavor">${S.world.discovered.map(id => esc(MapX.getLocation(id).name)).join(' · ')}</p>
-    <div class="btn-row">
-      <button class="btn ghost" data-act="location">← Back to ${esc(here.name)}</button>
-    </div>
-  </div>`;
-}
-
-// ---------------------------------------------------------------- LOCATION
-// ---------------------------------------------------------------- LOCATION (explore view)
-// Point-and-click district navigation, Dragon Knight 4 style: the location is
-// a scene with positioned hotspots (audience hall, people, market, inn,
-// shrine, gates) generated from live game data by explore.js.
-function renderLocation() {
-  const loc = MapX.getLocation(S.player.location);
-  const spots = Explore.hotspotsFor(S, S.player.location);
-  const hb = Quests.questState(S, 'hollow_bell');
-  const canFinale = S.player.location === 'honnoji' && hb.stage === 5 && !S.world.flags.game_complete;
-  const servingHere = Object.keys(Factions.FACTIONS).some((fid) =>
-    Factions.factionActive(S, fid) && Factions.factionCapital(S, fid) === S.player.location &&
-    S.world.service.faction === fid);
-
-  // pending battle banner
-  let battleBanner = '';
-  if (S.world.pendingBattle) {
-    const b = History.BATTLES[S.world.pendingBattle];
-    const sides = History.battleSidesText(b);
-    battleBanner = `<div class="battle-banner">
-      <h3>📯 ${esc(b.name)} (${esc(b.jp)}) is raging nearby!</h3>
-      <p class="flavor">${esc(b.desc)}</p>
-      <p><b>${esc(sides.a)}</b> ⚔ <b>${esc(sides.b)}</b></p>
-      <p class="flavor">Join the fray — or leave before the armies march (traveling on resolves it without you).</p>
-      <div class="btn-row">
-        <button class="btn big" data-act="join-battle" data-id="a">⚔ Fight for ${esc(sides.a)}</button>
-        <button class="btn big" data-act="join-battle" data-id="b">⚔ Fight for ${esc(sides.b)}</button>
-        <button class="btn ghost" data-act="skip-battle">Stay out of it</button>
-      </div></div>`;
-  }
-
-  return `
-  <div class="screen explore-screen" style="${bgStyle(loc.bg)}">
-    <div class="explore-head">
-      <h2>${esc(loc.name)} <span class="jp">${esc(loc.jp)}</span></h2>
-      <p class="flavor">${esc(loc.desc)}</p>
-      <p class="flavor">🦊 <i>“${esc(Aiko.aikoLine(S, { situation: 'idle' }))}”</i></p>
-    </div>
-    ${battleBanner}
-    <div class="explore-scene" aria-label="Explore ${esc(loc.name)}">
-      ${spots.map(p => `<button class="hotspot" style="left:${p.x}%;top:${p.y}%"
-          data-act="${p.act}" data-id="${esc(p.id || '')}" title="${esc(p.label)}">
-        <span class="hs-icon">${p.icon}</span><span class="hs-label">${esc(p.label)}</span>${p.sub ? `<span class="hs-sub">${esc(p.sub)}</span>` : ''}
-      </button>`).join('')}
-    </div>
-    <div class="loc-card">
-      ${servingHere ? `<div class="btn-row"><button class="btn big" data-act="missions">📜 Missions for ${esc(Factions.factionDisplayName(S, S.world.service.faction))}</button></div>` : ''}
-      ${canFinale ? `<div class="finale"><button class="btn big danger" data-act="finale">🔔 Enter Honnō-ji — face the Hollow Bell</button></div>` : ''}
-      ${tidingsHtml(4)}
-      <div class="btn-row">
-        <button class="btn big" data-act="map">🗺 Travel</button>
-        <button class="btn ghost" data-act="wait">⏳ Wait a day</button>
-        <button class="btn ghost" data-act="factions">👑 The Great Clans</button>
-        <button class="btn ghost" data-act="quests">📜 Quests</button>
-      </div>
-      <div id="loc-msg"></div>
-    </div>
-  </div>`;
-}
-// ---------------------------------------------------------------- DIALOGUE
-function startDialogue(npcId) {
-  const npc = DLG.resolveNpc(S, npcId);
-  if (!npc) return;
-  if (DLG.isDaimyoNpc(npcId)) St.rememberNpc(S, npcId, 'met', true);
-  else St.rememberNpc(S, npcId, 'met', true);
-  dlg = { npcId, npc, beats: npc.greet(S), idx: 0, topic: null, choices: null, afterBeats: null, notes: [] };
-  screen = 'dialogue';
-  render();
-}
-
-function renderDialogue() {
-  const { npc, beats, idx } = dlg;
-  const arch = DLG.npcPortraitFor(npc);
-  const label = npc.archetype === 'daimyo' ? `${Factions.factionDisplayName(S, npc.faction)} — Daimyo` : (DLG.ARCHETYPES[npc.archetype] || {}).label || '';
-  if (idx < beats.length) {
-    const beat = beats[idx];
-    const sp = speakerInfo(beat.who);
-    const text = DLG.beatText(S, beat);
-    return `
-    <div class="screen dlg-screen">
-      <div class="dlg-box">
-        <div class="dlg-head">${sp.port}<div><b>${esc(sp.name || '—')}</b><br><small>${esc(label)}</small></div></div>
-        <div class="dlg-text">${esc(text).replace(/\n/g, '<br>')}</div>
-        <div class="btn-row"><button class="btn big" data-act="dlg-next">▼ Continue</button></div>
-      </div>
-    </div>`;
-  }
-  if (dlg.choices) {
-    return `
-    <div class="screen dlg-screen"><div class="dlg-box">
-      <div class="dlg-head">${portrait(arch.portrait, arch.fallback)}<div><b>${esc(npc.name)}</b><br><small>Choose — the world will remember.</small></div></div>
-      <div class="btn-grid">${dlg.choices.map((c, i) => {
-        const ok = !c.need || c.need(S);
-        return `<button class="btn choice" data-act="dlg-choice" data-id="${i}" ${ok ? '' : 'disabled'}>${esc(c.label)}</button>`;
-      }).join('')}</div>
-      <div class="btn-row"><button class="btn ghost" data-act="dlg-topics">← Back</button></div>
-    </div></div>`;
-  }
-  const topics = npc.topics.filter(t => !t.need || t.need(S));
-  return `
-  <div class="screen dlg-screen"><div class="dlg-box">
-    <div class="dlg-head">${portrait(arch.portrait, arch.fallback)}<div><b>${esc(npc.name)}</b><br><small>${esc(label)} — what will you discuss?</small></div></div>
-    <div class="btn-grid">
-      ${topics.map(t => `<button class="btn" data-act="dlg-topic" data-id="${t.id}">💬 ${esc(t.label)}</button>`).join('')}
-    </div>
-    <div class="btn-row"><button class="btn ghost" data-act="location">Leave</button></div>
-    ${dlg.notes.length ? `<div class="notes">${dlg.notes.map(n => `<p>${esc(n)}</p>`).join('')}</div>` : ''}
-  </div></div>`;
-}
-
-function dialogueNext() {
-  dlg.idx += 1;
-  if (dlg.idx >= dlg.beats.length && dlg.afterBeats === 'topics') dlg.afterBeats = null;
-  render();
-}
-
-// ---------------------------------------------------------------- interactive H-scenes (Dragon Knight 4 flavor)
-// Clickable hotspots over tasteful CG art; explicit content lives in the text.
-// Only reachable via the hscene topic, which exists solely on adult NPCs.
-function startScene(sceneId, npcId) {
-  const sc = Scenes.SCENES[sceneId];
-  const npc = DLG.resolveNpc(S, npcId);
-  hscene = { sceneId, npcId, stageIdx: 0, touches: 0, seen: {}, log: [sc.stages[0].intro(npc.name)] };
-  screen = 'hscene';
-  render();
-}
-
-function renderScene() {
-  const sc = Scenes.SCENES[hscene.sceneId];
-  const npc = DLG.resolveNpc(S, hscene.npcId);
-  const stage = sc.stages[hscene.stageIdx];
-  const cg = npc.sceneCg || sc.cg;
-  const done = hscene.touches >= stage.need;
-  const hearts = '❤'.repeat(Math.min(hscene.touches, stage.need)) + '🤍'.repeat(Math.max(0, stage.need - hscene.touches));
-  const last = hscene.stageIdx === sc.stages.length - 1;
-  return `
-  <div class="screen hscene-screen" style="background-image:url('assets/${esc(cg)}')">
-    <div class="hscene-top"><span>🌙 <b>${esc(npc.name)}</b> — ${esc(stage.title)}</span><span class="hearts">${hearts}</span></div>
-    <div class="hscene-spots">
-      ${done ? '' : stage.spots.map(sp =>
-        `<button class="hotspot" style="left:${sp.x}%;top:${sp.y}%" data-act="scene-touch" data-id="${sp.id}" title="${esc(sp.label)}">${sp.icon}</button>`
-      ).join('')}
-    </div>
-    <div class="hscene-log">${hscene.log.slice(-6).map(t => `<p>${esc(t)}</p>`).join('')}</div>
-    ${done
-      ? `<div class="hscene-next"><p>${esc(stage.advance(npc.name))}</p><div class="btn-row">
-           ${last
-             ? `<button class="btn big" data-act="scene-end">🌅 Rest until morning</button>`
-             : `<button class="btn big" data-act="scene-next">❤ Continue</button>`}
-         </div></div>`
-      : `<div class="hscene-hint">Touch the glowing spots… ${stage.need - hscene.touches} more</div>`}
-  </div>`;
-}
-
-// ---------------------------------------------------------------- COMBAT
-function startCombat(enemyIdOrObj, returnTo = 'location', battle = null) {
-  combat = Combat.createCombat(S, enemyIdOrObj);
-  combat.battle = battle; // {id, side} when joining a historical battle
-  combatReturn = returnTo;
-  combatPhase = 'menu';
-  combatNotes = [];
-  screen = 'combat';
-  render();
-}
-
-function renderCombat() {
-  const c = combat, e = c.enemy;
-  const log = c.log.slice(-9).map(l => `<p>${esc(l)}</p>`).join('');
-  const telegraph = c.enemyTelegraph ? `<p class="tele">🔮 Aiko: “It's going to ${esc(c.enemyTelegraph.label.toLowerCase())}!”</p>` : '';
-  let actions = '';
-  if (combatPhase === 'menu') {
-    actions = `<div class="btn-grid">
-      <button class="btn big" data-act="c-attack">⚔ Attack</button>
-      <button class="btn big" data-act="c-spell">🔮 Onmyōdō</button>
-      <button class="btn big" data-act="c-item">🎒 Item</button>
-      <button class="btn big" data-act="c-aiko">🦊 Aiko: ${esc(Combat.AIKO_ORDERS[c.aikoOrder].name)}</button>
-      <button class="btn ghost" data-act="c-flee">🏃 Flee</button>
-    </div>`;
-  } else if (combatPhase === 'spell') {
-    actions = `<div class="btn-grid">${Object.entries(Combat.SPELLS).map(([id, sp]) =>
-      `<button class="btn" data-act="c-cast" data-id="${id}" ${S.player.rei < sp.cost ? 'disabled' : ''}>${esc(sp.name)} (${sp.cost}🔮)<br><small>${esc(sp.desc)}</small></button>`
-    ).join('')}</div><div class="btn-row"><button class="btn ghost" data-act="c-back">← Back</button></div>`;
-  } else if (combatPhase === 'item') {
-    const usable = S.player.inventory.filter(i => ['herb', 'spirit_pill', 'bride_charm'].includes(i.id));
-    actions = `<div class="btn-grid">${usable.length ? usable.map(i =>
-      `<button class="btn" data-act="c-use" data-id="${i.id}">${esc(St.ITEMS[i.id].name)} ×${i.qty}</button>`
-    ).join('') : '<p class="flavor">No usable items.</p>'}</div><div class="btn-row"><button class="btn ghost" data-act="c-back">← Back</button></div>`;
-  } else if (combatPhase === 'aiko') {
-    actions = `<div class="btn-grid">${Object.entries(Combat.AIKO_ORDERS).map(([id, o]) =>
-      `<button class="btn" data-act="c-order" data-id="${id}">🦊 ${esc(o.name)}<br><small>${esc(o.desc)}</small></button>`
-    ).join('')}</div><div class="btn-row"><button class="btn ghost" data-act="c-back">← Back</button></div>`;
-  } else if (combatPhase === 'spare') {
-    actions = `<div class="spare-box"><h3>${esc(e.name)} is faltering!</h3>
-      <p class="flavor">🦊 <i>“${esc(Aiko.battleBanter(S, c))}”</i></p>
-      <div class="btn-row">
-        <button class="btn big" data-act="c-spare">🕊 SPARE it</button>
-        <button class="btn big danger" data-act="c-finish">⚔ FINISH it</button>
-      </div></div>`;
-  } else if (combatPhase === 'over') {
-    const won = c.result === 'victory';
-    actions = `<div class="spare-box"><h3>${c.result === 'fled' ? 'You fled the battle.' : won ? '🏆 Victory!' : '💀 Defeat…'}</h3>
-      ${combatNotes.map(n => `<p class="flavor">${esc(n)}</p>`).join('')}
-      <div class="btn-row"><button class="btn big" data-act="c-continue">Continue →</button></div></div>`;
-  }
-  return `
-  <div class="screen combat-screen" style="${bgStyle('bg_battlefield.png')}">
-    <div class="combat-card">
-      <div class="foe">
-        ${portrait(e.sprite, e.kind === 'yokai' ? '👹' : '⚔️', 'portrait foe-port')}
-        <div class="foe-info"><h2>${esc(e.name)} <span class="jp">${esc(e.jp)}</span></h2>
-        <p class="flavor">${esc(e.desc)}</p>${bar(e.hp, e.maxHp, 'ehp')}</div>
-      </div>
-      <div class="ally-row">
-        <div class="ally">${bar(S.player.hp, S.player.maxHp, 'hp')}${bar(S.player.rei, S.player.maxRei, 'rei')}<small>${esc(S.player.name)} — ATK ${Combat.playerAttack(S)} / DEF ${Combat.playerDefense(S) + (c.playerBuffs.ward > 0 ? 6 : 0)}</small></div>
-        <div class="ally">${bar(S.aiko.hp, S.aiko.maxHp, 'ahp')}<small>🦊 Aiko (bond ${S.aiko.bond})</small></div>
-      </div>
-      <p class="round">Round ${c.round}${c.battle ? ` — fighting for ${esc(History.battleSidesText(c.battle.id)[c.battle.side])}` : ''}</p>
-      ${telegraph}
-      <div class="combat-log">${log}</div>
-      ${actions}
-    </div>
-  </div>`;
-}
-
-function combatAction(action) {
-  const { events, end } = Combat.doRound(combat, S, action);
-  combat.log.push(...events);
-  if (!combat.warned && S.player.hp > 0 && S.player.hp / S.player.maxHp < 0.3 && !combat.over) {
-    combat.warned = true;
-    combat.log.push('🦊 Aiko: “' + Aiko.aikoLine(S, { situation: 'lowhp' }) + '”');
-  }
-  handleCombatEnd(end);
-  render();
-}
-
-function battleAftermath(wonSkirmish) {
-  // resolving a historical battle the player joined
-  const b = combat.battle;
-  const news = [];
-  const side = wonSkirmish ? b.side : null;
-  const r = History.resolveBattle(S, b.id, side, wonSkirmish, news);
-  combatNotes.push(...news.map((n) => '📯 ' + n));
-  if (r.upset) {
-    St.bondChange(S, 8, 'changed history together');
-    combatNotes.push(`🦊 Aiko: “${Aiko.aikoLine(S, { situation: 'victory' })}”`);
-  }
-  const promo = Factions.promoteCheck(S);
-  if (promo) combatNotes.push(`📜 Promoted to ${promo}!`);
-}
-
-function handleCombatEnd(end) {
-  if (!end) return;
-  if (end === 'spare_offer') { combatPhase = 'spare'; return; }
-  if (end === 'fled') {
-    if (combat.battle) { battleAftermath(false); }
-    else if (combat.mission) { finishMissionBattle(false); }
-    combatPhase = 'over'; return;
-  }
-  if (end === 'victory') {
-    const r = Combat.victoryRewards(combat, S);
-    combat.log.push(...r.out);
-    if (combat.battle) battleAftermath(true);
-    else if (combat.mission) finishMissionBattle(true);
-    const qn = Quests.onCombatVictoryQuest(S, combat.enemyId, !!combat.spared);
-    combatNotes.push(...qn);
-    if (!combat.warned2) { combat.warned2 = true; combatNotes.push(Aiko.aikoLine(S, { situation: 'victory' })); }
-    const promo = Factions.promoteCheck(S);
-    if (promo) combatNotes.push(`📜 Promoted to ${promo}!`);
-    combatPhase = 'over';
-    St.saveGame(S);
+// ---------------- sex flow ----------------
+function doSexIntent(n, templateId, force) {
+  if (!n) { toast('Who with? Click someone first.'); return; }
+  const shape = npcShape(n);
+  const ok = Act.quickActionById('sex').allowed(shape, S);
+  if (ok !== true) { toast(typeof ok === 'string' ? ok : 'Not now.'); return; }
+  const consent = Act.consentFor(S, n.id, !!force);
+  if (!force && consent === 'unsure') {
+    aikoSay(`Hmm, ${n.rec.name} doesn't seem ready for that. Spend time with her first — or are you saying you want to force it?`, 'surprised');
+    say('sys', `Tip: type "force ${n.rec.name.split(' ')[0].toLowerCase()}" to take her by force (dark karma, guards may come).`);
     return;
   }
-  if (end === 'defeat') {
-    const lost = Combat.defeatPenalty(S);
-    combat.log.push(`Darkness takes you… You wake on the roadside, ${lost} gold lighter.`);
-    if (combat.battle) battleAftermath(false);
-    else if (combat.mission) finishMissionBattle(false);
-    combatNotes.push(Aiko.aikoLine(S, { situation: 'defeat' }));
-    combatPhase = 'over';
-    St.saveGame(S);
-  }
+  walkAdjacent(n, () => openSexPicker(n, templateId, !!force, consent));
 }
-
-// ---------------------------------------------------------------- MISSIONS
-function renderMissions() {
-  const fid = S.world.service.faction;
-  if (!fid) return `<div class="screen"><p>No lord, no missions. Pledge service to a daimyo first.</p><div class="btn-row"><button class="btn ghost" data-act="location">← Back</button></div></div>`;
-  const fname = Factions.factionDisplayName(S, fid);
-  const active = S.world.activeMission;
-  return `
-  <div class="screen"><h2>📜 Missions — ${esc(fname)} <span class="flavor">(${esc(Factions.rankName(S))})</span></h2>
-  <p class="flavor">Missions take days. The realm does not wait — history advances while you work.</p>
-  ${active ? `<div class="mission active"><h3>🗡 Active: ${esc(active.title)}</h3><p class="flavor">${esc(active.desc)}</p>
-    <p class="flavor">Takes ${active.days} days. Reward: ${active.gold}g, +${active.rep} rep, +${active.fame} fame.</p>
-    <button class="btn big" data-act="mission-go">Undertake it →</button></div>`
-  : `<div class="btn-grid">${missionList.map((m, i) => `
-    <button class="btn" data-act="mission-take" data-id="${i}"><b>${esc(m.title)}</b> <small>(${m.days}d)</small><br>
-    <small>${esc(m.desc)}</small><br><small>Reward: ${m.gold}g · +${m.rep} rep · +${m.fame} fame</small></button>`).join('')}</div>
-    <div class="btn-row"><button class="btn ghost" data-act="mission-refresh">🔄 Ask for different work</button></div>`}
-  <div class="btn-row"><button class="btn ghost" data-act="location">← Back</button></div></div>`;
+function openSexPicker(n, templateId, force, consent) {
+  const others = world.npcs.filter(x => x.id !== n.id && x.rec.adult && Math.abs(x.x - n.x) + Math.abs(x.y - n.y) <= 4);
+  const tpl = templateId ? Act.sexTemplateById(templateId) : null;
+  if (tpl) { startSex(n, tpl, others.slice(0, 1), force, consent); return; }
+  const list = Act.SEX_TEMPLATES.filter(t => t.participants === '1m1f' || (others.length && t.participants !== '1m1f'));
+  openPanel(`<button class="close-x" id="p-x">✕</button><h3>🔞 ${esc(n.rec.name)} ${force ? '(forced)' : ''}</h3>
+    <p><small>${consent === 'eager' ? 'She wants this.' : consent === 'willing' ? 'She seems willing.' : 'Taken by force.'}</small></p>
+    ${others.length ? `<p><small>Others nearby: ${esc(others.map(x => x.rec.name).join(', '))} — threesome templates available.</small></p>` : ''}
+    <div class="btn-row">${list.map(t => `<button data-s="${t.id}">${esc(t.name)}</button>`).join('')}</div>
+    <div class="beats"><small>Choose how the night unfolds. ${force ? '⚠️ Forced — karma will suffer.' : ''}</small></div>`);
+  $('p-x').onclick = closePanel;
+  $('panel').querySelectorAll('[data-s]').forEach(b => b.onclick = () => {
+    const t = Act.sexTemplateById(b.dataset.s);
+    const extra = t.participants === '1m1f' ? [] : others.slice(0, t.participants === '2m1f' ? 0 : 1);
+    startSex(n, t, extra, force, consent);
+  });
 }
-
-function completeMission(s, m, wonBattle) {
-  if (!m._daysAdvanced) St.advanceHours(s, m.days * 24);
-  m._daysAdvanced = false;
-  let ok = true;
-  const notes = [];
-  if (m.kind === 'intrigue') {
-    const stat = m.stat === 'agi' ? s.player.agi : s.player.level * 2;
-    ok = Math.random() * 100 < 40 + stat * 5;
-    notes.push(ok ? 'Your scheming succeeds flawlessly. No one suspects the quiet onmyōji.' : 'You are noticed asking questions. The mission fails — and tongues wag.');
-  } else if (m.kind === 'battle') {
-    ok = wonBattle;
-    notes.push(ok ? 'The task is done. Bloodied, but done.' : 'You were driven off. The task goes unfinished.');
-  } else {
-    notes.push('The letter is delivered, the convoy guarded. Quiet, honest work.');
-  }
-  const news = History.processDate(s);
-  if (ok) {
-    St.addGold(s, m.gold);
-    Factions.changeRep(s, m.fid, m.rep);
-    St.addFame(s, m.fame);
-    const r = St.addExp(s, m.exp);
-    notes.push(`Reward: +${m.gold} gold, +${m.rep} rep, +${m.fame} fame, +${m.exp} EXP${r.leveled ? ` — LEVEL UP (Lv${s.player.level})` : ''}.`);
-    const promo = Factions.promoteCheck(s);
-    if (promo) notes.push(`📜 PROMOTION! You are now ${promo} of ${Factions.factionDisplayName(s, m.fid)}.`);
-    const bl = Aiko.aikoLine(s, { situation: 'victory' });
-    notes.push(`🦊 Aiko: “${bl}”`);
-  } else {
-    Factions.changeRep(s, m.fid, -3);
-    notes.push('(Reputation -3.)');
-  }
-  s.world.activeMission = null;
-  return { notes, news };
-}
-
-function finishMissionBattle(won) {
-  const m = combat.mission;
-  const { notes, news } = completeMission(S, m, won);
-  combatNotes.push(...notes.map((n) => '📜 ' + n));
-  combatNotes.push(...news.map((n) => '📯 ' + n));
-  pushNews(news);
-}
-
-function scaledMissionEnemy(s, m) {
-  const base = Combat.ENEMIES[m.enemy] || Combat.ENEMIES.ronin;
-  const mult = 1 + (m.minRank || 0) * 0.25;
-  return {
-    ...base, maxHp: Math.round(base.hp * mult), hp: Math.round(base.hp * mult),
-    atk: Math.round(base.atk * mult), def: Math.round(base.def * mult),
-    exp: Math.round(base.exp * mult), gold: Math.round(base.gold * mult),
-  };
-}
-
-// ---------------------------------------------------------------- STATUS
-function renderStatus() {
-  const p = S.player;
-  const quests = [...Quests.activeQuests(S)];
-  const inv = p.inventory.map(i => {
-    const def = St.ITEMS[i.id];
-    return `<div class="inv-row"><span><b>${esc(def.name)}</b> ×${i.qty}<br><small>${esc(def.desc)}</small></span>
-      ${['herb', 'spirit_pill', 'sweet_buns'].includes(i.id) ? `<button class="btn small" data-act="use-item" data-id="${i.id}">Use</button>` : ''}</div>`;
-  }).join('') || '<p class="flavor">Empty pockets, full heart.</p>';
-  const reps = Object.keys(Factions.FACTIONS).map(fid => {
-    const st = Factions.factionState(S, fid);
-    if (!st.active && st.rep === 0) return '';
-    return `<div>${st.active ? '🏯' : '💀'} ${esc(Factions.factionDisplayName(S, fid))} — rep <b>${st.rep}</b>${st.active ? ` · str ${st.strength}` : ' (destroyed)'}</div>`;
-  }).join('');
-  const svc = S.world.service.faction;
-  return `
-  <div class="screen"><h2>📊 Status — ${esc(p.name)}</h2>
-    <div class="stat-grid">
-      <div>Level <b>${p.level}</b> (${p.exp}/${St.expNext(p.level)} EXP)</div>
-      <div>❤ HP <b>${p.hp}/${p.maxHp}</b></div>
-      <div>🔮 Rei <b>${p.rei}/${p.maxRei}</b></div>
-      <div>⚔ ATK <b>${Combat.playerAttack(S)}</b> 🛡 DEF <b>${Combat.playerDefense(S)}</b> 💨 AGI <b>${p.agi}</b></div>
-      <div>💰 Gold <b>${p.gold}</b></div>
-      <div>⭐ Fame <b>${p.fame}</b> · 🎖 Honor <b>${p.honor}</b></div>
-      <div>Karma <b>${karmaLabel()}</b></div>
-      <div>Service <b>${serviceLabel()}</b></div>
-      ${S.world.courtRank ? `<div>👑 Court rank: <b>${esc(Factions.COURT_RANKS[S.world.courtRank])}</b></div>` : ''}
-    </div>
-    <h3>🦊 Aiko — bound shikigami</h3>
-    <div class="stat-grid"><div>HP <b>${S.aiko.hp}/${S.aiko.maxHp}</b></div><div>Bond <b>${S.aiko.bond}/100</b></div><div>Mood <b>${esc(S.aiko.mood)}</b></div></div>
-    <p class="flavor"><i>“${esc(Aiko.aikoLine(S, { situation: 'idle' }))}”</i></p>
-    <h3>🎒 Inventory</h3>${inv}
-    <h3>👑 Standing with the great clans</h3><div class="stat-grid">${reps}</div>
-    <h3>📜 Quests</h3>
-    ${quests.map(q => `<p><b>${esc(q.title)}</b> <small>(${q.kind})</small><br><small>${esc(Quests.questJournalText(S, q.id))}</small></p>`).join('') || '<p class="flavor">No active quests.</p>'}
-    ${tidingsHtml(8)}
-    <div class="btn-row"><button class="btn ghost" data-act="location">← Back</button>
-    <button class="btn danger" data-act="abandon">Abandon journey (delete save)</button></div>
-    <div id="status-msg"></div>
-  </div>`;
-}
-
-// ---------------------------------------------------------------- FACTIONS overview
-function renderFactions() {
-  const rows = Object.keys(Factions.FACTIONS).map(fid => {
-    const st = Factions.factionState(S, fid);
-    const dm = Factions.currentDaimyo(S, fid);
-    const cap = MapX.getLocation(Factions.factionCapital(S, fid));
-    const serving = S.world.service.faction === fid;
-    return `<div class="inv-row"><span><b>${st.active ? '🏯' : '💀'} ${esc(Factions.factionDisplayName(S, fid))}</b> <span class="jp">${esc(Factions.factionJp(S, fid))}</span>
-      ${serving ? '<b>— your lord</b>' : ''}<br>
-      <small>${st.active ? `Lord: ${esc(dm.name)} · Seat: ${esc(cap.name)} · Strength ${st.strength}` : 'Destroyed by history.'}</small><br>
-      <small>${esc(Factions.factionDef(fid).desc)}</small></span>
-      <span>rep <b>${st.rep}</b></span></div>`;
-  }).join('');
-  return `<div class="screen"><h2>👑 The Great Clans</h2>
-    <p class="flavor">Eleven powers shape Japan. Travel to a clan's seat to request an audience with its lord —
-    pledge your sword, take missions, rise in rank... or play them against each other.</p>
-    ${rows}
-    <div class="btn-row"><button class="btn ghost" data-act="location">← Back</button></div></div>`;
-}
-
-// ---------------------------------------------------------------- SHOP
-function renderShop() {
-  const stock = ['herb', 'spirit_pill', 'sweet_buns', 'iron_talisman', 'warding_cord', 'sacred_sake', 'fine_silk', 'tea_set', 'war_horse'];
-  return `
-  <div class="screen"><h2>🛒 Daijirō's Wares <span class="flavor">— “Everything must go! Especially to you!”</span></h2>
-  <p class="flavor">Your gold: <b>${S.player.gold}</b> · <small>Silk, tea utensils and war horses open doors at court.</small></p>
-  ${stock.map(id => { const it = St.ITEMS[id]; return `<div class="inv-row"><span><b>${esc(it.name)}</b> — ${it.price}g<br><small>${esc(it.desc)}</small></span>
-    <button class="btn small" data-act="buy" data-id="${id}" ${S.player.gold < it.price ? 'disabled' : ''}>Buy</button></div>`; }).join('')}
-  <div class="btn-row"><button class="btn ghost" data-act="location">← Back</button></div></div>`;
-}
-
-// ---------------------------------------------------------------- ENDING (optional epilogue)
-function renderEnding() {
-  const tier = St.karmaTier(S.player.karma);
-  const bond = S.aiko.bond;
-  const endings = {
-    benevolent: 'The disturbances fade. Villagers from Kutsuki to Sakai light lanterns in your name. You walk the roads not as a conqueror, but as a guardian — and the spirits bow as you pass.',
-    kind: 'The bell is silent. You leave Honnō-ji with clean hands and a lighter heart. The era rages on, but wherever you walk, a little peace follows.',
-    neutral: 'The bell is silent. History may not remember your name — but the roads are safer, and that is enough. Probably.',
-    harsh: 'The bell is silent, broken by your hand. None dare bar your road now. The spirits whisper your name — in warning.',
-    ruthless: 'The bell is silent because you devoured its echo. Power answers to power, and all of it answers to you. Even Aiko watches you a little warily now.',
-  };
-  const bondLine = bond >= 70 ? 'Aiko walks beside you, her paper sleeve brushing yours. "Wherever next, master? Together."'
-    : bond >= 40 ? 'Aiko follows at a respectful distance. The contract holds — for now.'
-    : 'Aiko\'s form flickers at the edge of your shadow. The bond is thin. One more cruelty might snap it.';
-  return `
-  <div class="screen title-screen" style="${bgStyle('bg_shrine.png')}">
-    <div class="title-card"><div class="jp-title">終幕</div><h1>The Bell is Silent</h1>
-    <p class="tagline">${esc(endings[tier])}</p>
-    <p class="tagline"><i>🦊 ${esc(bondLine)}</i></p>
-    <p class="flavor">But history marches on — and so do you. The realm remains yours to wander.</p>
-    <p class="flavor">Karma: ${S.player.karma} (${tier}) · Aiko's bond: ${bond} · Level ${S.player.level} · Fame ${S.player.fame}</p>
-    <button class="btn big" data-act="location">Keep wandering the land →</button>
-    <button class="btn ghost" data-act="title">Return to title</button>
-    </div></div>`;
-}
-
-// ---------------------------------------------------------------- events
-function msg(t) { pendingMsg = t; }
-
-// ---------------------------------------------------------------- WHISPER — private spirit bond with Aiko
-// A floating panel (outside #app so it survives re-renders). Only the player
-// hears this conversation — NPCs never see it. When the Aiko-chan server link
-// is live, the real Aiko (LLM + inner voice) answers; otherwise she answers
-// from local scripted lines.
-let whOpen = false, whOnline = null, whBusy = false;
-let whLog = [], whActions = [];
-
-function initWhisper() {
-  if (document.getElementById('whisper')) return;
-  const el = document.createElement('div');
-  el.id = 'whisper';
-  el.className = 'whisper hidden';
-  el.innerHTML = `
-    <div class="wh-head"><span>🦊 <b>Spirit Bond</b></span>
-      <small>mind-to-mind · no one else can hear</small>
-      <span id="wh-stat" class="wh-stat">…</span>
-      <button class="btn small ghost" data-act="wh-close">✕</button></div>
-    <div id="wh-log" class="wh-log"></div>
-    <div id="wh-actions" class="wh-actions"></div>
-    <div class="wh-input">
-      <input id="wh-text" maxlength="300" placeholder="Whisper to Aiko…" autocomplete="off">
-      <button class="btn" data-act="wh-send">➤</button>
-    </div>
-    <div class="wh-foot"><button class="btn small ghost" data-act="wh-server">⚙ link: <span id="wh-url"></span></button></div>`;
-  document.body.appendChild(el);
-  el.querySelector('#wh-text').addEventListener('keydown', (ev) => {
-    if (ev.key === 'Enter') { ev.preventDefault(); whisperSend(); }
+function startSex(n, tpl, extraNpcs, force, consent) {
+  const ids = [n.id, ...extraNpcs.map(x => x.id)];
+  let seq;
+  try { seq = Act.sexSequence(tpl.id, ids.map(id => ({ id, ...DLG.NPCS[id] })), S, force); }
+  catch (err) { toast('Couldn\'t begin: ' + err.message); return; }
+  const beats = seq.beats.map(b => ({
+    poseSelf: b.poses.m, poseNpc: b.poses.f,
+    arrangement: b.arrangement === 'behind' || b.arrangement === 'face' ? 'close' : undefined,
+    text: b.text.replace('{m}', S.player.name).replace('{f}', n.rec.name).replace('{f2}', extraNpcs[0] ? extraNpcs[0].rec.name : ''),
+    hold: 3.2,
+  }));
+  const actors = { self: { pose: 'embrace' }, [n.id]: { pose: 'lie' } };
+  for (const x of extraNpcs) actors[x.id] = { pose: 'lie' };
+  playBeats(beats, actors, `🔞 ${tpl.name} — ${n.rec.name}`, () => {
+    const c = seq.consequences;
+    if (c.karma) St.addKarma(S, c.karma);
+    for (const [k, v] of Object.entries(c.flags || {})) St.setFlag(S, k, v === 'TODAY' ? St.dateKey(S) : v);
+    if (c.news) St.addNews(S, c.news);
+    St.saveGame(S); updateHud();
+    lastEvent = `${force ? 'forced' : 'lovely'} night with ${n.rec.name}`;
+    toast(force ? 'It is done. The night will not forget this.' : 'A night to remember. 🌙');
+    aikoSay(brain.respond(`i spent the night with ${n.rec.name}`, brainCtx()).text, force ? 'sad' : 'love');
   });
 }
 
-function whisperRender() {
-  const log = document.getElementById('wh-log');
-  if (!log) return;
-  log.innerHTML = whLog.map(m =>
-    `<p class="wh-${m.who}"><b>${m.who === 'you' ? 'You' : '🦊 Aiko'}:</b> ${esc(m.text)}</p>`).join('');
-  log.scrollTop = log.scrollHeight;
-  const stat = document.getElementById('wh-stat');
-  if (stat) stat.textContent = whOnline === null ? '…' : whOnline ? '🟢 live' : '⚪ memory';
-  const dot = document.getElementById('wh-dot');
-  if (dot) dot.className = 'dot' + (whOnline === true ? ' on' : whOnline === false ? ' off' : '');
-  const urlEl = document.getElementById('wh-url');
-  if (urlEl) urlEl.textContent = Link.serverUrl().replace(/^https?:\/\//, '');
-  const acts = document.getElementById('wh-actions');
-  if (acts) acts.innerHTML = whActions.map((a, i) =>
-    `<button class="btn small" data-act="wh-do" data-id="${i}">✨ ${esc(a.label)}</button>`).join('');
+// ---------------- Aiko spirit ----------------
+function doAiko(sub, target) {
+  if (sub === 'fly') { world.aikoMode = 'fly'; toast('🦊 Aiko takes to the sky.'); }
+  else if (sub === 'land' || sub === 'follow') { world.aikoMode = 'follow'; toast('🦊 Aiko floats back to your side.'); }
+  else if (sub === 'hide') { world.aikoMode = 'hide'; toast('🦊 Aiko melts into the shadows.'); }
+  else if (sub === 'possess') {
+    const n = findNpcRef(target);
+    if (!n) { toast('Possess whom?'); return; }
+    if (n.rec.adult === false) { /* no age gate needed; possession is non-sexual */ }
+    world.possessed = n.id; world.aikoMode = 'follow';
+    toast(`🦊 Aiko slips inside ${n.rec.name}. Move with arrows — you guide her body. Type "release" to let go.`);
+    say('sys', `You now move ${n.rec.name}. Aiko whispers: "Tell me what to make her do."`);
+    lastEvent = 'possessed ' + n.rec.name;
+  }
+  else if (sub === 'release') {
+    if (!world.possessed) { toast('Aiko isn\'t possessing anyone.'); return; }
+    const n = world.npcById(world.possessed);
+    world.possessed = null;
+    world.aiko.x = n.x; world.aiko.y = n.y;
+    toast(`🦊 Aiko slips out of ${n.rec.name}, giggling.`);
+  }
 }
 
-function offlineWhisper() {
-  return Aiko.aikoLine(S, { situation: 'idle' }) +
-    ' (My other self is out of reach — the Aiko-chan link is asleep. I answer from memory.)';
+// ---------------- warps / doors / menu ----------------
+function doWarp(w) {
+  say('sys', `🚶 ${w.label}…`);
+  world.loadLocation(w.to);
+  const [tx, ty] = w.ts || world.map.spawns.player;
+  world.player.x = tx; world.player.y = ty; world.player.fx = tx; world.player.fy = ty;
+  world.aiko.x = tx; world.aiko.y = ty;
+  lastEvent = 'traveled to ' + world.map.name;
+  updateHud(); St.saveGame(S);
+  aikoSay(brain.respond(`we arrived at ${world.map.name}`, brainCtx()).text, 'happy');
 }
-
-async function whisperSend() {
-  const input = document.getElementById('wh-text');
-  if (!input) return;
-  const text = (input.value || '').trim();
-  if (!text || whBusy || !S) return;
-  input.value = '';
-  whLog.push({ who: 'you', text });
-  whBusy = true; whisperRender();
-  try {
-    if (whOnline === null) whOnline = await Link.linkOnline();
-    if (whOnline) {
-      const reply = await Link.talkToAiko(text, {
-        name: S.player.name,
-        loc: MapX.getLocation(S.player.location).name,
-        date: St.dateLabel(S), bond: S.aiko.bond, karma: S.player.karma,
-      });
-      const { clean, actions } = Link.extractActions(reply);
-      whLog.push({ who: 'aiko', text: clean || '…' });
-      whActions = actions;
-    } else {
-      whLog.push({ who: 'aiko', text: offlineWhisper() });
-      whActions = [];
-    }
-  } catch (e) {
-    whOnline = false;
-    whLog.push({ who: 'aiko', text: 'The bond flickers… I cannot reach my other self right now. (link error — I answer from memory: ' + offlineWhisper() + ')' });
-    whActions = [];
-  }
-  whBusy = false; whisperRender();
-  St.saveGame(S);
+function doorBump(door) {
+  if (S.world.flags[door.flag]) return;
+  toast(`🚪 ${door.name} is locked. Type "open door" nearby, or find another way.`);
 }
-
-function whisperToggle() {
-  const el = document.getElementById('whisper');
-  if (!el || !S) return;
-  whOpen = !whOpen;
-  el.classList.toggle('hidden', !whOpen);
-  if (whOpen && !whLog.length) {
-    whLog.push({ who: 'aiko', text: '“This is our private bond, master. Speak, and no one else will hear.”' });
+function buildQuickActions() {
+  const row = $('quick-actions'); row.innerHTML = '';
+  for (const a of Act.QUICK_ACTIONS) {
+    if (a.id === 'talk') continue;
+    const b = document.createElement('button');
+    b.className = 'qbtn'; b.textContent = a.label; b.title = a.label;
+    b.onclick = () => {
+      const n = (selectedNpc && world.npcById(selectedNpc)) || world.nearestNpc(3);
+      doQuickAction(a.id, n);
+    };
+    row.appendChild(b);
   }
-  if (whOpen && whOnline === null) {
-    Link.linkOnline().then((ok) => {
-      whOnline = ok;
-      if (!ok) whLog.push({ who: 'aiko', text: '“Hmm — I cannot feel my other self. The link must be asleep; I will answer from memory.”' });
-      whisperRender();
-    });
-  }
-  whisperRender();
-  const input = document.getElementById('wh-text');
-  if (whOpen && input) input.focus();
+  const talk = document.createElement('button');
+  talk.className = 'qbtn'; talk.textContent = '💬 Talk';
+  talk.onclick = () => { const n = (selectedNpc && world.npcById(selectedNpc)) || world.nearestNpc(3); if (n) walkAdjacent(n, () => openTopics(n)); else toast('No one nearby.'); };
+  row.prepend(talk);
 }
-
-document.addEventListener('click', (ev) => {
-  const btn = ev.target.closest('[data-act]');
-  if (!btn || btn.disabled) return;
-  const act = btn.dataset.act, id = btn.dataset.id;
-
-  if (act === 'new') {
-    const name = (document.getElementById('pname') || {}).value || 'Onmyoji';
-    S = St.newGame(name.trim() || 'Onmyoji');
-    Factions.initFactions(S);
-    St.addNews(S, '📜 6th month, 1570. You arrive in Kyoto — a wandering onmyōji with a bound shikigami and no master. The realm is yours.');
-    St.saveGame(S);
-    screen = 'location'; render(); return;
-  }
-  if (act === 'continue') { S = St.loadGame(); if (S) { Factions.initFactions(S); screen = 'location'; render(); } return; }
-  if (act === 'title') {
-    whOpen = false;
-    const wp = document.getElementById('whisper');
-    if (wp) wp.classList.add('hidden');
-    screen = 'title'; render(); return;
-  }
-  if (act === 'howto') { document.getElementById('howto').classList.toggle('hidden'); return; }
-  if (!S) return;
-
-  if ((screen === 'combat' || screen === 'dialogue') && (act === 'status')) return;
-
-  switch (act) {
-    case 'save': St.saveGame(S); msg('Progress saved. The kami approve of backups.'); break;
-    case 'map': screen = 'map'; break;
-    case 'location': screen = 'location'; break;
-    case 'status': screen = 'status'; break;
-    case 'factions': screen = 'factions'; break;
-    case 'quests': screen = 'status'; break;
-    case 'travel': {
-      // leaving resolves a pending battle without you
-      if (S.world.pendingBattle) {
-        const news = [];
-        History.resolveBattle(S, S.world.pendingBattle, null, false, news);
-        pushNews(news);
-      }
-      const r = MapX.travel(S, id);
-      if (!r.ok) { msg(r.reason); screen = 'map'; }
-      else {
-        pushNews(r.news);
-        if (r.encounter) { St.saveGame(S); startCombat(r.encounter, 'location'); return; }
-        msg(`You travel ${r.days} day${r.days > 1 ? 's' : ''} on the road.`);
-        screen = 'location';
-      }
-      St.saveGame(S);
-      break;
-    }
-    case 'talk': startDialogue(id); return;
-    case 'audience': {
-      const req = Factions.audienceReq(S, id);
-      if (!req.ok) { msg('👑 ' + req.reason); break; }
-      St.advanceHours(S, 3);
-      S.world.metDaimyo[id] = true;
-      Factions.changeRep(S, id, 1);
-      pushNews(History.processDate(S));
-      startDialogue('daimyo_' + id); return;
-    }
-    case 'missions':
-      missionList = Factions.generateMissions(S, S.world.service.faction);
-      screen = 'missions'; break;
-    case 'mission-refresh':
-      missionList = Factions.generateMissions(S, S.world.service.faction);
-      screen = 'missions'; break;
-    case 'mission-take': {
-      const m = missionList[+id];
-      if (!m) break;
-      S.world.activeMission = m;
-      msg(`Accepted: ${m.title}.`);
-      St.saveGame(S); screen = 'missions'; break;
-    }
-    case 'mission-go': {
-      const m = S.world.activeMission;
-      if (!m) break;
-      if (m.kind === 'battle') {
-        St.advanceHours(S, m.days * 24);
-        m._daysAdvanced = true;
-        pushNews(History.processDate(S));
-        const enemy = scaledMissionEnemy(S, m);
-        combatReturn = 'missions';
-        startCombat(enemy, 'missions');
-        combat.mission = m;
-        return;
-      }
-      const { notes, news } = completeMission(S, m, true);
-      pushNews(news);
-      msg(notes.join(' '));
-      St.saveGame(S); screen = 'missions'; break;
-    }
-    case 'join-battle': {
-      const b = History.BATTLES[S.world.pendingBattle];
-      if (!b) break;
-      const sides = History.battleSidesText(b);
-      const foeName = id === 'a' ? sides.b : sides.a;
-      const enemy = Combat.officerFor(S, `Officer of ${foeName}`);
-      startCombat(enemy, 'location', { id: b.id, side: id });
-      return;
-    }
-    case 'skip-battle': {
-      const news = [];
-      History.resolveBattle(S, S.world.pendingBattle, null, false, news);
-      pushNews(news);
-      msg('You watch the distant smoke and march on. History will not remember your absence.');
-      St.saveGame(S); break;
-    }
-    case 'dlg-next': dialogueNext(); return;
-    case 'scene-touch': {
-      if (!hscene) break;
-      const sc = Scenes.SCENES[hscene.sceneId];
-      const stage = sc.stages[hscene.stageIdx];
-      if (!stage || hscene.touches >= stage.need) break;
-      const sp = stage.spots.find(x => x.id === id);
-      if (!sp) break;
-      const seenN = hscene.seen[sp.id] || 0;
-      if (seenN >= sp.texts.length) break; // each spot yields each of its texts once
-      const npc = DLG.resolveNpc(S, hscene.npcId);
-      hscene.seen[sp.id] = seenN + 1;
-      hscene.log.push(sp.texts[seenN](npc.name));
-      hscene.touches += 1;
-      St.saveGame(S); render(); return;
-    }
-    case 'scene-next': {
-      if (!hscene) break;
-      const sc = Scenes.SCENES[hscene.sceneId];
-      const cur = sc.stages[hscene.stageIdx];
-      if (!cur || hscene.touches < cur.need) break; // stage not complete
-      if (hscene.stageIdx >= sc.stages.length - 1) break; // no further stage
-      hscene.stageIdx += 1; hscene.touches = 0; hscene.seen = {};
-      const npc = DLG.resolveNpc(S, hscene.npcId);
-      hscene.log.push(sc.stages[hscene.stageIdx].intro(npc.name));
-      St.saveGame(S); render(); return;
-    }
-    case 'scene-end': {
-      if (!hscene) break;
-      const sc0 = Scenes.SCENES[hscene.sceneId];
-      const last0 = sc0.stages[hscene.stageIdx];
-      if (!last0 || hscene.stageIdx !== sc0.stages.length - 1 || hscene.touches < last0.need) break;
-      const npcId = hscene.npcId;
-      const lkey = DLG.loverKeyFor(npcId);
-      hscene = null; screen = 'location';
-      applyEffects([{ heal: 40 }, { exp: 30 }, { flag: ['lovday_' + lkey, 'TODAY'] }, { bond: 2 }]);
-      St.addNews(S, `🌙 A night of passion with ${esc(DLG.resolveNpc(S, npcId).name)} — the realm need never know.`);
-      St.saveGame(S); render(); return;
-    }
-    case 'dlg-topics': dlg.choices = null; dlg.idx = dlg.beats.length; render(); return;
-    case 'dlg-topic': {
-      const t = dlg.npc.topics.find(t => t.id === id);
-      if (!t) break;
-      if (t.need && !t.need(S)) break;
-      if (t.id === 'duel') {
-        const dm = Factions.currentDaimyo(S, dlg.npc.faction);
-        officerLabel = `${dm.name}'s Champion`;
-      }
-      dlg.topic = t;
-      dlg.beats = t.beats(S);
-      dlg.idx = 0; dlg.choices = null; dlg.afterBeats = t.choices ? 'choices' : 'topics';
-      const fx = applyEffects(t.effects);
-      dlg.notes.push(...fx.notes);
-      if (fx.combat || fx.scene) { St.saveGame(S); return; }
-      St.saveGame(S);
-      render(); return;
-    }
-    case 'dlg-choice': {
-      const c = dlg.choices[+id];
-      if (!c || (c.need && !c.need(S))) break;
-      dlg.beats = c.beats(S);
-      dlg.idx = 0; dlg.choices = null;
-      const { notes, combat: started } = applyEffects(c.effects);
-      dlg.notes.push(...notes);
-      if (started) { St.saveGame(S); return; }
-      dlg.afterBeats = 'topics';
-      St.saveGame(S);
-      render(); return;
-    }
-    case 'inn': {
-      const r = MapX.innRest(S, 20);
-      if (!r.ok) { msg(r.reason); break; }
-      pushNews(r.news);
-      msg(`You rest till morning, wounds bound and spirit settled. 🦊 “You snore like a tanuki.”`);
-      St.saveGame(S); break;
-    }
-    case 'wait': {
-      const r = MapX.waitDay(S);
-      pushNews(r.news);
-      msg('You wait out a full day — watching the clouds, listening to the realm breathe.');
-      St.saveGame(S); break;
-    }
-    case 'shrine': {
-      MapX.shrinePray(S);
-      const r = St.addKarma(S, 1);
-      pushNews(r.news);
-      msg(`You pray for two hours. Rei restored. (+1 karma → ${r.tier})`);
-      St.saveGame(S); break;
-    }
-    case 'shop': screen = 'shop'; break;
-    case 'buy': {
-      const it = St.ITEMS[id];
-      if (S.player.gold >= it.price) { St.addGold(S, -it.price); St.addItem(S, id, 1); msg(`Bought ${it.name}.`); }
-      screen = 'shop'; break;
-    }
-    case 'use-item': {
-      if (id === 'herb' && St.removeItem(S, id)) { St.healPlayer(S, 40); msg('Herb used. +40 HP.'); }
-      else if (id === 'spirit_pill' && St.removeItem(S, id)) { S.player.rei = Math.min(S.player.maxRei, S.player.rei + 20); msg('Spirit pill used. +20 Rei.'); }
-      else if (id === 'sweet_buns' && St.removeItem(S, id)) {
-        const r = St.bondChange(S, 5, 'gift');
-        msg(`You share sweet bean buns with Aiko. Bond +5 (now ${r.now}). “MY FAVORITE! …I mean. Thank you, master.”`);
-      }
-      screen = 'status'; St.saveGame(S); break;
-    }
-    case 'abandon':
-      if (confirm('Abandon this journey? Your save will be deleted.')) { St.clearSave(); S = null; screen = 'title'; }
-      break;
-    // ---- whisper: private spirit bond ----
-    case 'whisper': whisperToggle(); break;
-    case 'wh-close': whOpen = false; document.getElementById('whisper').classList.add('hidden'); break;
-    case 'wh-send': whisperSend(); return;
-    case 'wh-server': {
-      const cur = Link.serverUrl();
-      const next = prompt('Aiko-chan server URL (empty = reset to default):', cur);
-      if (next !== null) { Link.setServerUrl(next.trim()); whOnline = null; whisperRender(); }
-      break;
-    }
-    case 'wh-do': {
-      const a = whActions[+id];
-      const def = a && Link.ACTION_DEFS[a.verb];
-      if (!a || !def || whBusy) break;
-      whBusy = true; whisperRender();
-      (async () => {
-        try {
-          if (def.kind === 'server') {
-            const r = await Link.performServerAction(a.verb, a.label);
-            whLog.push({ who: 'aiko', text: `✨ ${a.label} — ${r.text}` });
-          } else if (a.verb === 'cheer') {
-            const r = St.bondChange(S, 2, 'cheered up by Aiko');
-            whLog.push({ who: 'aiko', text: `“There — smile, master. The realm is less dreary already.” (Bond +2 → ${r.now})` });
-          }
-          St.saveGame(S);
-        } catch (e) {
-          whLog.push({ who: 'aiko', text: 'It did not work… the spirits are being difficult today.' });
-        }
-        whActions = []; whBusy = false; whisperRender();
-      })();
-      break;
-    }
-    // ---- explore flavor hotspots ----
-    case 'x-rumor': {
-      St.advanceHours(S, 1);
-      pushNews(History.processDate(S));
-      msg('👂 ' + Explore.RUMORS[Math.floor(Math.random() * Explore.RUMORS.length)]);
-      St.saveGame(S); break;
-    }
-    case 'x-drills': {
-      St.advanceHours(S, 2);
-      const r = St.addExp(S, 3);
-      pushNews(History.processDate(S));
-      msg(`⚔ You watch the ashigaru drill until your own shoulders ache. (+3 EXP${r.leveled ? ` — LEVEL UP! Now level ${S.player.level}` : ''}) 🦊 “Sloppy footwork. Even I could do better, and I have no feet.”`);
-      St.saveGame(S); break;
-    }
-    case 'x-restspot': {
-      St.advanceHours(S, 2);
-      St.healPlayer(S, 15);
-      pushNews(History.processDate(S));
-      msg('🌳 You rest in the shade, listening to the wind move through the land. (+15 HP)');
-      St.saveGame(S); break;
-    }
-    case 'x-aiko': {
-      msg('🦊 “' + Aiko.aikoLine(S, { situation: 'idle' }) + '”');
-      break;
-    }
-    // ---- combat ----
-    case 'c-attack': combatAction({ type: 'attack' }); return;
-    case 'c-spell': combatPhase = 'spell'; break;
-    case 'c-cast': combatPhase = 'menu'; combatAction({ type: 'spell', id }); return;
-    case 'c-item': combatPhase = 'item'; break;
-    case 'c-use': combatPhase = 'menu'; combatAction({ type: 'item', id }); return;
-    case 'c-aiko': combatPhase = 'aiko'; break;
-    case 'c-order': {
-      combat.aikoOrder = id;
-      if (id === 'strike' && S.aiko.hp / S.aiko.maxHp < 0.3) {
-        combat.log.push('🦊 Aiko: “' + Aiko.onEvent(S, 'danger') + '”');
-        St.bondChange(S, -2, 'ordered into danger while hurt');
-      } else if (id !== 'auto') {
-        St.bondChange(S, 1, 'heeded orders');
-      }
-      combatPhase = 'menu'; break;
-    }
-    case 'c-flee': combatAction({ type: 'flee' }); return;
-    case 'c-back': combatPhase = 'menu'; break;
-    case 'c-spare': {
-      const r = Combat.resolveSpare(combat, S, 'spare');
-      combat.log.push(...r.out);
-      if (r.karma) combat.log.push('🦊 Aiko: “' + (Aiko.reactToKarma(S, r.karma.delta) || '…') + '”');
-      St.bondChange(S, 2, 'showed mercy');
-      if (combat.battle) battleAftermath(true);
-      else if (combat.mission) finishMissionBattle(true);
-      const vr = Combat.victoryRewards(combat, S);
-      combat.log.push(...vr.out);
-      combatNotes.push(...Quests.onCombatVictoryQuest(S, combat.enemyId, true));
-      combatNotes.push(Aiko.aikoLine(S, { situation: 'victory' }));
-      combatPhase = 'over'; St.saveGame(S); break;
-    }
-    case 'c-finish': {
-      const r = Combat.resolveSpare(combat, S, 'finish');
-      combat.log.push(...r.out);
-      if (r.karma && r.karma.delta < 0) {
-        combat.log.push('🦊 Aiko: “' + (Aiko.reactToKarma(S, r.karma.delta) || '…') + '”');
-        St.bondChange(S, -2, 'finished a helpless foe');
-      }
-      if (combat.battle) battleAftermath(true);
-      else if (combat.mission) finishMissionBattle(true);
-      const vr = Combat.victoryRewards(combat, S);
-      combat.log.push(...vr.out);
-      combatNotes.push(...Quests.onCombatVictoryQuest(S, combat.enemyId, false));
-      combatNotes.push(Aiko.aikoLine(S, { situation: 'victory' }));
-      combatPhase = 'over'; St.saveGame(S); break;
-    }
-    case 'c-continue': {
-      if (combat.battle || combat.mission) screen = 'location';
-      else if (S.world.flags.game_complete && combat.enemyId === 'hollow_bell') screen = 'ending';
-      else screen = combatReturn;
-      combat = null; officerLabel = null; break;
-    }
-    case 'finale': startCombat('hollow_bell', 'location'); return;
-  }
-  render();
-  const msgEl = document.getElementById('loc-msg') || document.getElementById('status-msg');
-  let html = '';
-  if (pendingMsg) html += `<p class="sysmsg">${esc(pendingMsg)}</p>`;
-  if (pendingNews.length) html += `<div class="tidings flash">${pendingNews.map(n => `<p>${esc(n)}</p>`).join('')}</div>`;
-  if (msgEl && html) msgEl.innerHTML = html;
-  pendingMsg = ''; pendingNews = [];
-});
-
-// topic choices: after a topic's beats finish, show its moral choices (if any)
-const _renderDialogue = renderDialogue;
-renderDialogue = function () {
-  if (dlg && dlg.idx >= dlg.beats.length && !dlg.choices && dlg.topic && dlg.topic.choices && dlg.afterBeats === 'choices') {
-    dlg.choices = dlg.topic.choices;
-    dlg.topic = null;
-  }
-  return _renderDialogue();
+$('btn-menu').onclick = () => {
+  openPanel(`<h3>☰ Menu</h3><div class="btn-row">
+    <button id="m-save">💾 Save</button><button id="m-title">🚪 Title</button><button id="m-x">✕ Close</button></div>
+    <p><small>${esc(world ? world.map.name : '')} · ${esc(St.dateLabel(S))}</small></p>`);
+  $('m-save').onclick = () => { St.saveGame(S); toast('Saved.'); closePanel(); };
+  $('m-title').onclick = () => location.reload();
+  $('m-x').onclick = closePanel;
 };
 
-const RENDERERS = {
-  title: renderTitle, map: renderMap, location: renderLocation,
-  dialogue: renderDialogue, combat: renderCombat, status: renderStatus,
-  shop: renderShop, ending: renderEnding, factions: renderFactions,
-  missions: renderMissions, hscene: renderScene,
-};
+// ---------------- panel helpers ----------------
+function openPanel(html) { const p = $('panel'); p.innerHTML = html; p.classList.remove('hidden'); }
+function closePanel() { $('panel').classList.add('hidden'); }
 
-function render() {
-  app.innerHTML = topbar() + RENDERERS[screen]();
-}
-
-initWhisper();
-render();
+boot();
